@@ -22,7 +22,8 @@ lay out yourself.
 generator` backend with no hardware in the chain. Pink noise is flat per octave, so a
 fractional-octave RTA reading flat across the band is the check: a wrong window, a wrong
 normalisation or a wrong band integration would show as a tilt or a step instead. LAF and
-LAeq,5min agree at −23.9, and every level says dBFS because nothing here is calibrated.*
+LAeq,5min agree within 0.1 dB over a complete window, and every level says dBFS because
+nothing here is calibrated.*
 
 **Status: alpha.** The measurement core is well tested and the app runs; it has not yet
 been used in anger on a show.
