@@ -149,6 +149,8 @@ export interface Frame {
   clipped: boolean;
   elapsedSeconds: number;
   calibration?: CalibrationStatus;
+  /** Present only while a reference source is selected. */
+  transfer?: TransferReading;
 }
 
 /** `leqtion_audio::HostInfo` */
@@ -183,8 +185,111 @@ export interface StreamInfo {
 export interface SessionStatus {
   running: boolean;
   stream?: StreamInfo;
+  output?: StreamInfo;
   droppedFrames: number;
   streamErrors: number;
+  /** Non-zero means the internal reference lost alignment; find the delay again. */
+  referenceUnderruns: number;
+  reference: ReferenceSource;
+  /** False means input and output are on separate clocks and will drift apart. */
+  clockShared: boolean;
+}
+
+/** `leqtion_dsp::generator::Signal` */
+export type Signal =
+  | { kind: 'off' }
+  | { kind: 'sine'; hz: number }
+  | { kind: 'white' }
+  | { kind: 'pink' }
+  | { kind: 'sweep'; fromHz: number; toHz: number; seconds: number };
+
+/** `leqtion_dsp::generator::GeneratorConfig` */
+export interface GeneratorConfig {
+  signal: Signal;
+  /** dBFS RMS. A full-scale sine is 0. */
+  levelDbfs: number;
+  highPassHz: number | null;
+  lowPassHz: number | null;
+}
+
+export const DEFAULT_GENERATOR: GeneratorConfig = {
+  signal: { kind: 'off' },
+  levelDbfs: -20,
+  highPassHz: null,
+  lowPassHz: null,
+};
+
+/**
+ * Peak a signal is expected to reach, dBFS. Mirrors
+ * `GeneratorConfig::expected_peak_dbfs`.
+ *
+ * Above 0 it will clip. Worth showing, because "pink noise at −6 dBFS" sounds
+ * conservative and is not: noise has a crest factor around 12 dB.
+ */
+export function expectedPeakDbfs(config: GeneratorConfig): number {
+  const crest =
+    config.signal.kind === 'off'
+      ? 0
+      : config.signal.kind === 'white' || config.signal.kind === 'pink'
+        ? 12
+        : 3.0103;
+  return config.levelDbfs + crest - 3.0103;
+}
+
+/** `leqtion::session::ReferenceSource` */
+export type ReferenceSource =
+  | { kind: 'off' }
+  | { kind: 'internal' }
+  | { kind: 'loopback'; channel: number };
+
+/** `leqtion_dsp::transfer::TfAveraging` */
+export type TfAveraging = 'fast' | 'slow' | 'long' | 'infinite';
+
+/** `leqtion_dsp::transfer::TransferConfig` */
+export interface TransferConfig {
+  pointsPerOctave: number;
+  fMin: number;
+  fMax: number;
+  averaging: TfAveraging;
+  window: WindowKind;
+  coherenceFloor: number;
+}
+
+export const DEFAULT_TRANSFER: TransferConfig = {
+  pointsPerOctave: 24,
+  fMin: 20,
+  fMax: 20000,
+  averaging: 'slow',
+  window: 'hann',
+  coherenceFloor: 0.5,
+};
+
+/** `leqtion_dsp::transfer::TransferPlan` */
+export interface TransferPlan {
+  pointsPerOctave: number;
+  sampleRate: number;
+  frequencies: number[];
+  fftSizes: number[];
+  longestWindowSeconds: number;
+}
+
+/** `leqtion_dsp::transfer::TransferReading` */
+export interface TransferReading {
+  magnitudeDb: number[];
+  phaseDeg: number[];
+  coherence: number[];
+  frames: number;
+  valid: boolean;
+  delaySamples: number;
+  delayMs: number;
+}
+
+/** `leqtion_dsp::transfer::DelayEstimate` */
+export interface DelayEstimate {
+  samples: number;
+  milliseconds: number;
+  metres: number;
+  confidence: number;
 }
 
 /** `leqtion_audio::CaptureOptions` */
@@ -202,6 +307,10 @@ export interface Settings {
   sampleRate: number | null;
   calibrations: Calibration[];
   layout: unknown;
+  transfer: TransferConfig;
+  generator: GeneratorConfig;
+  generatorChannel: number;
+  reference: ReferenceSource;
 }
 
 /** `leqtion::Startup` */
@@ -211,6 +320,8 @@ export interface Startup {
   devices: DeviceInfo[];
   status: SessionStatus;
   plan: BandPlan;
+  transferPlan: TransferPlan;
+  outputs: DeviceInfo[];
   calibrationTargets: CalibrationTarget[];
   version: string;
 }

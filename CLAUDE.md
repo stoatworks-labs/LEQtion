@@ -54,4 +54,8 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
 - Spectrum normalisation is `2/(N·S2)` and a full-scale sine reads **0 dBFS**.
 - **Never present an uncalibrated level as dB SPL.** Every readout states its unit.
 - The frontend renders; it does not calculate. No band tables or decibels in `src/`.
+- **Never draw a transfer function without coherence.** The magnitude trace breaks below
+  the floor; points fade in proportion. Coherence before four averages is meaningless.
+- **The generator defaults to Off and is never restored on launch.** Level persists, the
+  signal does not.
 - Public repo, MIT. "Commit" = commit **and** push.

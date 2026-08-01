@@ -2033,6 +2033,7 @@ dependencies = [
  "diag",
  "leqtion-audio",
  "leqtion-dsp",
+ "rtrb",
  "serde",
  "serde_json",
  "tauri",
@@ -2047,6 +2048,7 @@ name = "leqtion-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "leqtion-dsp",
  "rtrb",
  "serde",
  "thiserror 2.0.19",

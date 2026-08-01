@@ -160,7 +160,26 @@ fn list() {
             continue;
         }
         println!("{}{mark}", host.name);
+        println!("  inputs:");
         match leqtion_audio::devices(Some(&host.id)) {
+            Ok(devices) => {
+                for d in devices {
+                    println!(
+                        "    {}{}  — {} ch, {:?} Hz",
+                        d.name,
+                        if d.is_default { " (default)" } else { "" },
+                        d.max_channels,
+                        d.sample_rates
+                    );
+                }
+            }
+            Err(e) => println!("    {e}"),
+        }
+        // Listed too, because the generator needs one — and because whether an
+        // input device has an output side of the same name decides whether the
+        // two share a clock. See `Session::start`.
+        println!("  outputs:");
+        match leqtion_audio::output_devices(Some(&host.id)) {
             Ok(devices) => {
                 for d in devices {
                     println!(

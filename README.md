@@ -11,9 +11,10 @@
 > calibrator has been connected to it, and the ASIO path compiles but has never carried
 > audio. LEQtion is **not a certified sound level meter** and makes no conformance claim.
 
-A desktop sound level meter and real-time analyser: RTA, spectrograph, bargraph,
-time-weighted SPL and as many user-defined LEQs as you want, arranged on a grid of tiles
-you lay out yourself.
+A desktop sound level meter and dual-channel analyser: RTA, spectrograph, bargraph,
+time-weighted SPL, as many user-defined LEQs as you want, a signal generator, and
+transfer function measurement with phase and coherence — arranged on a grid of tiles you
+lay out yourself.
 
 **Status: alpha.** The measurement core is well tested and the app runs; it has not yet
 been used in anger on a show.
@@ -33,6 +34,16 @@ been used in anger on a show.
   is showing it.
 - **Calibration** — against a hardware acoustic calibrator, 94 or 114 dB at 1 kHz.
 - **Tiles** — add, remove, drag and resize. The layout persists.
+- **Generator** — pink noise, white noise, sine, and a repeating log sweep, out of a
+  channel you choose, with optional band-limiting. Level is dBFS RMS and the expected
+  *peak* is shown beside it, because pink noise at −6 dBFS RMS clips hard while reading
+  like a conservative setting.
+- **Transfer function** — magnitude, phase and coherence against a reference, which is
+  either the generator's own output tapped internally or a hardware loopback on an input.
+  Multi-time-window, so the bottom and top of the range are both usable.
+- **Delay finding** — locates the arrival from the impulse response, sub-sample
+  interpolated, and reports it in milliseconds, metres and samples with a confidence
+  figure.
 - **Backends** — Core Audio, WASAPI, ALSA and JACK out of the box; ASIO behind a build
   flag ([docs/asio.md](docs/asio.md)).
 
@@ -84,6 +95,29 @@ as at 1 kHz, the resulting A-weighted level is 0.23 dB out. **Run at 96 kHz if y
 it costs nothing but CPU and makes the weighting effectively exact, which is why the app
 shows the sample rate rather than hiding it.
 
+### The transfer function shows you where not to believe it
+
+`H = Sxy/Sxx` — the H1 estimator, from **complex-averaged** cross-spectra. Three details,
+and getting any of them wrong gives a plausible-looking curve that is wrong: the
+cross-spectrum must be averaged as a complex number, coherence is only defined across
+averages (a single frame always reads exactly 1), and the reference must be
+delay-compensated before any of it means anything.
+
+Coherence is drawn, not hidden. Every point is faded in proportion to it, and the
+magnitude trace **breaks** wherever coherence falls below the floor. A transfer function
+without coherence looks equally confident where the measurement is solid and where it is
+picking up the air conditioning, and people tune systems off the second kind.
+
+### One FFT length cannot serve 20 Hz and 16 kHz
+
+At 48 kHz a 16384-point transform gives 2.9 Hz bins: about right at 30 Hz, absurdly narrow
+at 10 kHz where it buys nothing and costs stability. A short transform is the reverse.
+
+So several transforms run in parallel — each serving a couple of octaves, halving in length
+as frequency rises — stitched onto one set of points at a fixed number per octave. Each
+slice's length is chosen so its bin spacing is finer than the output point spacing at the
+*bottom* of the range it serves, and a test asserts exactly that for every point.
+
 ### Uncalibrated levels are labelled dBFS, always
 
 Until you calibrate, every level is a full-scale level and the app says so — on the SPL
@@ -133,6 +167,12 @@ The whole measurement chain without the window — same engine, same numbers:
 ```bash
 cargo run --example meter -- --seconds 30 --offset 120
 ```
+
+`capture --list` also shows output devices, which matters more than it looks: if your input
+device has no output side of the same name, the generator falls back to the default output
+and the two run on **separate clocks**. The internal reference then drifts and the delay has
+to be found again every few minutes. The app says so when it happens. An interface whose
+input and output are one device — any Dante card, any USB interface — has no such problem.
 
 ## Build and run
 

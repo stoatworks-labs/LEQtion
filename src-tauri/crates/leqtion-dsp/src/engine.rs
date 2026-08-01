@@ -125,6 +125,43 @@ impl Path {
     }
 }
 
+/// Extract one mono signal from an interleaved block.
+///
+/// Public because the transfer function needs the *same* measurement signal the
+/// meter is using, and two implementations of "which channel" would eventually
+/// disagree — at which point the RTA and the transfer function would be looking
+/// at different microphones and nothing on screen would say so.
+///
+/// `out` is cleared and refilled; passing the same buffer back avoids
+/// allocating on the analysis thread.
+pub fn fold_channels(samples: &[f32], channels: usize, select: ChannelSelect, out: &mut Vec<f32>) {
+    out.clear();
+    if channels == 0 || samples.is_empty() {
+        return;
+    }
+    let frames = samples.len() / channels;
+    out.reserve(frames);
+
+    match select {
+        ChannelSelect::Channel { index } => {
+            let c = index.min(channels - 1);
+            for f in 0..frames {
+                out.push(samples[f * channels + c]);
+            }
+        }
+        ChannelSelect::Mix => {
+            let inv = 1.0 / channels as f32;
+            for f in 0..frames {
+                let mut sum = 0.0f32;
+                for c in 0..channels {
+                    sum += samples[f * channels + c];
+                }
+                out.push(sum * inv);
+            }
+        }
+    }
+}
+
 /// A level readout for one weighting.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,26 +338,7 @@ impl Engine {
             return;
         }
 
-        self.mono.clear();
-        self.mono.reserve(frames);
-        match self.config.channel {
-            ChannelSelect::Channel { index } => {
-                let c = index.min(channels - 1);
-                for f in 0..frames {
-                    self.mono.push(samples[f * channels + c]);
-                }
-            }
-            ChannelSelect::Mix => {
-                let inv = 1.0 / channels as f32;
-                for f in 0..frames {
-                    let mut sum = 0.0f32;
-                    for c in 0..channels {
-                        sum += samples[f * channels + c];
-                    }
-                    self.mono.push(sum * inv);
-                }
-            }
-        }
+        fold_channels(samples, channels, self.config.channel, &mut self.mono);
 
         let seconds = frames as f64 / self.sample_rate;
         self.elapsed += seconds;

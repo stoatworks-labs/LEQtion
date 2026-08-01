@@ -25,6 +25,16 @@
 //! Instead a dedicated thread builds the stream, keeps it alive, and waits for a
 //! stop signal. That also gives one obvious place for the driver's error
 //! callback to report to.
+//!
+//! ## The one input that is not a device
+//!
+//! [`synthetic`] presents the DSP crate's signal generator as a host with one
+//! device per signal, so a measurement can be run against a known level on a
+//! machine with no interface. It fills the same ring and returns the same
+//! [`Capture`], which is why `hosts`, `devices` and `open` are the only three
+//! places in the codebase that know it is not real.
+
+pub mod synthetic;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -41,6 +51,8 @@ pub enum AudioError {
     UnknownHost(String),
     #[error("no input device named {0}")]
     UnknownDevice(String),
+    #[error("no output device named {0}")]
+    UnknownOutputDevice(String),
     #[error("the host has no input devices")]
     NoDevices,
     #[error("{device} cannot run at {rate} Hz with {channels} channels")]
@@ -133,6 +145,10 @@ pub fn hosts() -> Vec<HostInfo> {
         });
     }
 
+    // Last, and never the default: a tool for checking the analyser, not an
+    // input anyone came here to measure.
+    out.push(synthetic::host());
+
     out
 }
 
@@ -162,6 +178,9 @@ fn find_host(id: Option<&str>) -> Result<cpal::Host> {
 
 /// Input devices on a host, or on the default host if none is named.
 pub fn devices(host_id: Option<&str>) -> Result<Vec<DeviceInfo>> {
+    if synthetic::is_host(host_id) {
+        return Ok(synthetic::devices());
+    }
     let host = find_host(host_id)?;
     let host_name = host_id_name(&host.id());
     let default_name = host.default_input_device().and_then(|d| d.description().ok()).map(|d| d.name().to_string());
@@ -303,6 +322,10 @@ const RING_SECONDS: f64 = 2.0;
 /// consumer on a normal thread and feed the samples to the engine; the values
 /// are interleaved, `info.channels` per frame.
 pub fn open(opts: CaptureOptions) -> Result<(Capture, rtrb::Consumer<f32>)> {
+    if synthetic::is_host(opts.host.as_deref()) {
+        return synthetic::open(opts);
+    }
+
     let host = find_host(opts.host.as_deref())?;
     let host_name = host_id_name(&host.id());
 
@@ -611,4 +634,256 @@ mod tests {
         });
         assert!(matches!(err, Err(AudioError::UnknownDevice(_)) | Err(AudioError::NoDevices)));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Output
+// ---------------------------------------------------------------------------
+
+/// Which output to open, and where on it to put the signal.
+///
+/// Deliberately no `host` field: the output always opens on the **same host and
+/// device as the input**. Two unsynchronised converters drift apart by
+/// milliseconds over a few minutes, and a transfer function measured across
+/// that drift shows a phase trace rotating steadily — which looks exactly like
+/// a real system fault and is not one. Sharing the device shares the clock.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputOptions {
+    /// Host id, which must match the input's.
+    pub host: Option<String>,
+    /// Device name. `None` opens the default output.
+    pub device: Option<String>,
+    /// Must match the input's rate, for the same reason.
+    pub sample_rate: Option<u32>,
+    pub buffer_frames: Option<u32>,
+}
+
+/// A running output. Dropping it stops the stream.
+pub struct Output {
+    stop: Option<mpsc::Sender<()>>,
+    join: Option<JoinHandle<()>>,
+    pub info: StreamInfo,
+    pub stats: Arc<CaptureStats>,
+}
+
+impl Output {
+    pub fn stop(mut self) {
+        self.shutdown();
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(tx) = self.stop.take() {
+            let _ = tx.send(());
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for Output {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// Open an output and drive it from `fill`.
+///
+/// `fill` is called on the audio thread with an interleaved buffer and the
+/// channel count, and must obey the same rule as everything else on that
+/// thread: no allocation, no locking, no blocking. It is expected to write
+/// every sample, including the channels it is not using — see
+/// `Generator::fill_interleaved` for why silence has to be written rather than
+/// left alone.
+pub fn open_output<F>(opts: OutputOptions, mut fill: F) -> Result<Output>
+where
+    F: FnMut(&mut [f32], usize) + Send + 'static,
+{
+    let host = find_host(opts.host.as_deref())?;
+    let host_name = host_id_name(&host.id());
+
+    let device = match &opts.device {
+        Some(want) => host
+            .output_devices()
+            .map_err(|e| AudioError::Backend(e.to_string()))?
+            .find(|d| d.description().map(|d| d.name() == want).unwrap_or(false))
+            .ok_or_else(|| AudioError::UnknownOutputDevice(want.clone()))?,
+        None => host.default_output_device().ok_or(AudioError::NoDevices)?,
+    };
+    let device_name = device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "unknown".into());
+
+    let default_config = device
+        .default_output_config()
+        .map_err(|e| AudioError::Backend(e.to_string()))?;
+    let sample_format = default_config.sample_format();
+    let channels = default_config.channels();
+    let rate = opts.sample_rate.unwrap_or(default_config.sample_rate());
+
+    let supported = device
+        .supported_output_configs()
+        .map_err(|e| AudioError::Backend(e.to_string()))?
+        .any(|c| {
+            c.channels() == channels && c.min_sample_rate() <= rate && rate <= c.max_sample_rate()
+        });
+    if !supported {
+        return Err(AudioError::UnsupportedConfig {
+            device: device_name,
+            rate,
+            channels,
+        });
+    }
+
+    let mut config: cpal::StreamConfig = default_config.into();
+    config.sample_rate = rate;
+    if let Some(frames) = opts.buffer_frames {
+        config.buffer_size = cpal::BufferSize::Fixed(frames);
+    }
+
+    let stats = Arc::new(CaptureStats::default());
+    let info = StreamInfo {
+        host: host_name,
+        device: device_name,
+        channels,
+        sample_rate: rate,
+        sample_format: format!("{sample_format:?}"),
+    };
+
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let (ready_tx, ready_rx) = mpsc::channel::<std::result::Result<(), String>>();
+    let thread_stats = Arc::clone(&stats);
+    let chans = channels as usize;
+
+    let join = std::thread::Builder::new()
+        .name("leqtion-output".into())
+        .spawn(move || {
+            let err_stats = Arc::clone(&thread_stats);
+            let on_error = move |e: cpal::Error| {
+                err_stats.stream_errors.fetch_add(1, Ordering::Relaxed);
+                tracing::error!("output stream error: {e}");
+            };
+
+            // Only f32 is built here. Every host cpal supports offers an f32
+            // output config, and generating into an integer format would mean
+            // dithering decisions that a measurement signal generator has no
+            // business making silently.
+            let built = device.build_output_stream(
+                config,
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    fill(data, chans);
+                },
+                on_error,
+                None,
+            );
+
+            let stream = match built {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e.to_string()));
+                    return;
+                }
+            };
+            if let Err(e) = stream.play() {
+                let _ = ready_tx.send(Err(e.to_string()));
+                return;
+            }
+
+            thread_stats.running.store(true, Ordering::Relaxed);
+            let _ = ready_tx.send(Ok(()));
+
+            loop {
+                match stop_rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => {}
+                }
+            }
+            thread_stats.running.store(false, Ordering::Relaxed);
+            drop(stream);
+        })
+        .map_err(|e| AudioError::Backend(e.to_string()))?;
+
+    match ready_rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let _ = join.join();
+            return Err(AudioError::Backend(e));
+        }
+        Err(_) => {
+            let _ = stop_tx.send(());
+            let _ = join.join();
+            return Err(AudioError::Backend(
+                "the output device did not start within ten seconds".into(),
+            ));
+        }
+    }
+
+    Ok(Output {
+        stop: Some(stop_tx),
+        join: Some(join),
+        info,
+        stats,
+    })
+}
+
+/// Output devices on a host, for the generator's routing picker.
+pub fn output_devices(host_id: Option<&str>) -> Result<Vec<DeviceInfo>> {
+    let host = find_host(host_id)?;
+    let host_name = host_id_name(&host.id());
+    let default_name = host
+        .default_output_device()
+        .and_then(|d| d.description().ok())
+        .map(|d| d.name().to_string());
+
+    let mut out = Vec::new();
+    for device in host
+        .output_devices()
+        .map_err(|e| AudioError::Backend(e.to_string()))?
+    {
+        let Ok(name) = device.description().map(|d| d.name().to_string()) else {
+            continue;
+        };
+        let Ok(configs) = device.supported_output_configs() else {
+            continue;
+        };
+        let configs: Vec<_> = configs.collect();
+        if configs.is_empty() {
+            continue;
+        }
+        let max_channels = configs.iter().map(|c| c.channels()).max().unwrap_or(0);
+        let default_sample_rate = device
+            .default_output_config()
+            .map(|c| c.sample_rate())
+            .unwrap_or(48000);
+        let mut sample_rates: Vec<u32> = OFFERED_RATES
+            .iter()
+            .copied()
+            .filter(|&r| {
+                configs
+                    .iter()
+                    .any(|c| c.min_sample_rate() <= r && r <= c.max_sample_rate())
+            })
+            .collect();
+        if !sample_rates.contains(&default_sample_rate) {
+            sample_rates.push(default_sample_rate);
+        }
+        sample_rates.sort_unstable();
+        sample_rates.dedup();
+
+        out.push(DeviceInfo {
+            host: host_name.clone(),
+            name: name.clone(),
+            max_channels,
+            sample_rates,
+            default_sample_rate,
+            is_default: default_name.as_deref() == Some(name.as_str()),
+        });
+    }
+
+    if out.is_empty() {
+        return Err(AudioError::NoDevices);
+    }
+    Ok(out)
 }

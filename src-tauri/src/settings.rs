@@ -16,6 +16,10 @@ use std::path::PathBuf;
 
 use leqtion_dsp::calibration::Calibration;
 use leqtion_dsp::engine::EngineConfig;
+use leqtion_dsp::generator::GeneratorConfig;
+use leqtion_dsp::transfer::TransferConfig;
+
+use crate::session::ReferenceSource;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +27,17 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     #[serde(default)]
     pub engine: EngineConfig,
+    #[serde(default)]
+    pub transfer: TransferConfig,
+    /// The generator is deliberately **not** restored to its last signal on
+    /// launch — see `Default`. Only its level and shaping are remembered.
+    #[serde(default)]
+    pub generator: GeneratorConfig,
+    /// Output channel the generator drives.
+    #[serde(default)]
+    pub generator_channel: usize,
+    #[serde(default)]
+    pub reference: ReferenceSource,
     /// Last input used, so the app comes back where it was left.
     #[serde(default)]
     pub host: Option<String>,
@@ -46,6 +61,13 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             engine: EngineConfig::default(),
+            transfer: TransferConfig::default(),
+            // Signal::Off by default, and it stays off across a restart even if
+            // the last session was generating. Opening a measurement app should
+            // never put pink noise into a PA before anyone has touched anything.
+            generator: GeneratorConfig::default(),
+            generator_channel: 0,
+            reference: ReferenceSource::default(),
             host: None,
             device: None,
             sample_rate: None,

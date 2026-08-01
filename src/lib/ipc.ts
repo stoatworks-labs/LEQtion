@@ -23,12 +23,17 @@ import type {
   CalibrationStatus,
   CalibrationTarget,
   CaptureOptions,
+  DelayEstimate,
   DeviceInfo,
   EngineConfig,
   Frame,
+  GeneratorConfig,
   HostInfo,
+  ReferenceSource,
   SessionStatus,
   Startup,
+  TransferConfig,
+  TransferPlan,
 } from '../types';
 
 const FRAME_EVENT = 'leqtion://frame';
@@ -53,6 +58,21 @@ export const api = {
   clearCalibration: () => invoke<void>('clear_calibration'),
   currentCalibration: () => invoke<Calibration | null>('current_calibration'),
   saveLayout: (layout: unknown) => invoke<void>('save_layout', { layout }),
+
+  listOutputDevices: (host?: string) =>
+    invoke<DeviceInfo[]>('list_output_devices', { host: host ?? null }),
+  setGenerator: (config: GeneratorConfig, channel: number) =>
+    invoke<void>('set_generator', { config, channel }),
+  setReference: (reference: ReferenceSource) =>
+    invoke<SessionStatus>('set_reference', { reference }),
+  setTransferConfig: (config: TransferConfig) =>
+    invoke<TransferPlan>('set_transfer_config', { config }),
+  transferPlan: () => invoke<TransferPlan>('transfer_plan'),
+  resetTransfer: () => invoke<void>('reset_transfer'),
+  findDelay: () => invoke<DelayEstimate | null>('find_delay'),
+  setDelaySamples: (samples: number) => invoke<void>('set_delay_samples', { samples }),
+  impulseResponse: (maxPoints: number) =>
+    invoke<number[]>('impulse_response', { maxPoints }),
 };
 
 type FrameListener = (frame: Frame) => void;

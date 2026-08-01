@@ -16,9 +16,11 @@ use std::sync::{Arc, Mutex};
 use leqtion_audio::{CaptureOptions, DeviceInfo, HostInfo};
 use leqtion_dsp::bands::BandPlan;
 use leqtion_dsp::calibration::{Calibration, CalibrationStatus, CalibrationTarget, STANDARD_TARGETS};
-use leqtion_dsp::engine::{Engine, EngineConfig, Frame};
+use leqtion_dsp::engine::{EngineConfig, Frame};
+use leqtion_dsp::generator::GeneratorConfig;
+use leqtion_dsp::transfer::{DelayEstimate, TransferConfig, TransferPlan};
 use serde::Serialize;
-use session::{Session, SessionStatus};
+use session::{Analysis, ReferenceSource, Session, SessionStatus};
 use settings::Settings;
 use tauri::{AppHandle, Manager, State};
 
@@ -29,12 +31,12 @@ struct AppState {
 }
 
 impl AppState {
-    fn engine(&self) -> Result<Arc<Mutex<Engine>>, String> {
+    fn analysis(&self) -> Result<Arc<Mutex<Analysis>>, String> {
         Ok(self
             .session
             .lock()
             .map_err(|_| "the session lock is poisoned; restart LEQtion")?
-            .engine())
+            .analysis())
     }
 
     /// Run something against the engine.
@@ -42,9 +44,9 @@ impl AppState {
     /// Every command that reads or writes measurement state goes through here,
     /// so the lock is taken and released in one place and no command can
     /// accidentally hold it across an emit or a file write.
-    fn with_engine<T>(&self, f: impl FnOnce(&mut Engine) -> T) -> Result<T, String> {
-        let engine = self.engine()?;
-        let mut guard = engine
+    fn with_analysis<T>(&self, f: impl FnOnce(&mut Analysis) -> T) -> Result<T, String> {
+        let analysis = self.analysis()?;
+        let mut guard = analysis
             .lock()
             .map_err(|_| "the analysis thread failed; stop and restart the measurement")?;
         Ok(f(&mut guard))
@@ -73,6 +75,8 @@ struct Startup {
     devices: Vec<DeviceInfo>,
     status: SessionStatus,
     plan: BandPlan,
+    transfer_plan: TransferPlan,
+    outputs: Vec<DeviceInfo>,
     calibration_targets: Vec<CalibrationTarget>,
     version: String,
 }
@@ -94,7 +98,10 @@ fn startup(state: State<'_, AppState>) -> Result<Startup, String> {
         .lock()
         .map_err(|_| "the session lock is poisoned; restart LEQtion")?
         .status();
-    let plan = state.with_engine(|e| e.plan().clone())?;
+    let (plan, transfer_plan) = state.with_analysis(|a| {
+        (a.engine.plan().clone(), a.transfer.plan().clone())
+    })?;
+    let outputs = leqtion_audio::output_devices(settings.host.as_deref()).unwrap_or_default();
 
     Ok(Startup {
         settings,
@@ -102,6 +109,8 @@ fn startup(state: State<'_, AppState>) -> Result<Startup, String> {
         devices,
         status,
         plan,
+        transfer_plan,
+        outputs,
         calibration_targets: STANDARD_TARGETS.to_vec(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
@@ -123,13 +132,23 @@ fn start(
     state: State<'_, AppState>,
     options: CaptureOptions,
 ) -> Result<SessionStatus, String> {
+    let (generator, generator_channel, reference) = {
+        let settings = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?;
+        (settings.generator, settings.generator_channel, settings.reference)
+    };
+
     let info = {
         let mut session = state
             .session
             .lock()
             .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
-        session.start(app, options.clone())?
+        session.set_generator(generator, generator_channel);
+        session.start(app, options.clone(), generator_channel)?
     };
+    state.with_analysis(|a| a.reference = reference)?;
 
     // Apply the stored calibration for whatever device actually opened, and
     // remember the choice for next launch.
@@ -143,7 +162,7 @@ fn start(
         settings.sample_rate = Some(info.sample_rate);
         let cal = settings.calibration_for(&info.device).cloned();
         drop(settings);
-        state.with_engine(|e| e.set_calibration(cal))?;
+        state.with_analysis(|a| a.engine.set_calibration(cal))?;
     }
     state.save_settings()?;
 
@@ -176,20 +195,20 @@ fn status(state: State<'_, AppState>) -> Result<SessionStatus, String> {
 /// A frame on demand, for the first paint before any event has arrived.
 #[tauri::command]
 fn frame(state: State<'_, AppState>) -> Result<Frame, String> {
-    state.with_engine(|e| e.frame())
+    state.with_analysis(|a| a.engine.frame())
 }
 
 #[tauri::command]
 fn band_plan(state: State<'_, AppState>) -> Result<BandPlan, String> {
-    state.with_engine(|e| e.plan().clone())
+    state.with_analysis(|a| a.engine.plan().clone())
 }
 
 #[tauri::command]
 fn set_config(state: State<'_, AppState>, config: EngineConfig) -> Result<BandPlan, String> {
-    let plan = state.with_engine(|e| {
-        let rate = e.sample_rate();
-        e.reconfigure(config.clone(), rate);
-        e.plan().clone()
+    let plan = state.with_analysis(|a| {
+        let rate = a.engine.sample_rate();
+        a.engine.reconfigure(config.clone(), rate);
+        a.engine.plan().clone()
     })?;
     {
         let mut settings = state
@@ -204,27 +223,27 @@ fn set_config(state: State<'_, AppState>, config: EngineConfig) -> Result<BandPl
 
 #[tauri::command]
 fn reset_measurement(state: State<'_, AppState>) -> Result<(), String> {
-    state.with_engine(|e| e.reset_measurement())
+    state.with_analysis(|a| a.engine.reset_measurement())
 }
 
 #[tauri::command]
 fn reset_peak_hold(state: State<'_, AppState>) -> Result<(), String> {
-    state.with_engine(|e| e.reset_peak_hold())
+    state.with_analysis(|a| a.engine.reset_peak_hold())
 }
 
 #[tauri::command]
 fn begin_calibration(state: State<'_, AppState>, target: CalibrationTarget) -> Result<(), String> {
-    state.with_engine(|e| e.begin_calibration(target))
+    state.with_analysis(|a| a.engine.begin_calibration(target))
 }
 
 #[tauri::command]
 fn calibration_status(state: State<'_, AppState>) -> Result<Option<CalibrationStatus>, String> {
-    state.with_engine(|e| e.calibration_status())
+    state.with_analysis(|a| a.engine.calibration_status())
 }
 
 #[tauri::command]
 fn cancel_calibration(state: State<'_, AppState>) -> Result<(), String> {
-    state.with_engine(|e| e.cancel_calibration())
+    state.with_analysis(|a| a.engine.cancel_calibration())
 }
 
 /// Accept the running calibration and store it against the open device.
@@ -248,12 +267,12 @@ fn accept_calibration(state: State<'_, AppState>) -> Result<Calibration, String>
     };
 
     let mut cal = state
-        .with_engine(|e| e.accept_calibration())?
+        .with_analysis(|a| a.engine.accept_calibration())?
         .ok_or("the calibration is not steady enough to accept yet")?;
     cal.device = device;
     cal.taken_at = now_rfc3339();
 
-    state.with_engine(|e| e.set_calibration(Some(cal.clone())))?;
+    state.with_analysis(|a| a.engine.set_calibration(Some(cal.clone())))?;
     {
         let mut settings = state
             .settings
@@ -275,7 +294,7 @@ fn clear_calibration(state: State<'_, AppState>) -> Result<(), String> {
             .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
         session.status().stream.map(|s| s.device)
     };
-    state.with_engine(|e| e.set_calibration(None))?;
+    state.with_analysis(|a| a.engine.set_calibration(None))?;
     if let Some(device) = device {
         let mut settings = state
             .settings
@@ -288,7 +307,7 @@ fn clear_calibration(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn current_calibration(state: State<'_, AppState>) -> Result<Option<Calibration>, String> {
-    state.with_engine(|e| e.calibration().cloned())
+    state.with_analysis(|a| a.engine.calibration().cloned())
 }
 
 /// Store the tile layout. Opaque JSON — see `settings::Settings::layout`.
@@ -302,6 +321,140 @@ fn save_layout(state: State<'_, AppState>, layout: serde_json::Value) -> Result<
         settings.layout = layout;
     }
     state.save_settings()
+}
+
+
+// ---------------------------------------------------------------------------
+// Generator and transfer function
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_output_devices(host: Option<String>) -> Result<Vec<DeviceInfo>, String> {
+    leqtion_audio::output_devices(host.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Change what the generator is producing, and where it goes.
+///
+/// Takes effect on the next audio callback — a few milliseconds — and the
+/// generator ramps rather than jumps, so this is safe to call from a slider
+/// being dragged.
+#[tauri::command]
+fn set_generator(
+    state: State<'_, AppState>,
+    config: GeneratorConfig,
+    channel: usize,
+) -> Result<(), String> {
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
+        session.set_generator(config, channel);
+    }
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?;
+        settings.generator = config;
+        settings.generator_channel = channel;
+    }
+    state.save_settings()
+}
+
+/// Choose where the transfer function's reference comes from.
+#[tauri::command]
+fn set_reference(
+    state: State<'_, AppState>,
+    reference: ReferenceSource,
+) -> Result<SessionStatus, String> {
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
+        session.set_reference(reference)?;
+    }
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?;
+        settings.reference = reference;
+    }
+    state.save_settings()?;
+    state
+        .session
+        .lock()
+        .map_err(|_| "the session lock is poisoned; restart LEQtion".to_string())
+        .map(|s| s.status())
+}
+
+#[tauri::command]
+fn set_transfer_config(
+    state: State<'_, AppState>,
+    config: TransferConfig,
+) -> Result<TransferPlan, String> {
+    let plan = state.with_analysis(|a| {
+        let rate = a.transfer.sample_rate();
+        a.transfer.reconfigure(config, rate);
+        a.transfer.plan().clone()
+    })?;
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?;
+        settings.transfer = config;
+    }
+    state.save_settings()?;
+    Ok(plan)
+}
+
+#[tauri::command]
+fn transfer_plan(state: State<'_, AppState>) -> Result<TransferPlan, String> {
+    state.with_analysis(|a| a.transfer.plan().clone())
+}
+
+#[tauri::command]
+fn reset_transfer(state: State<'_, AppState>) -> Result<(), String> {
+    state.with_analysis(|a| a.transfer.reset())
+}
+
+/// Locate the arrival and report it. Does **not** apply it — the UI shows the
+/// figure and its confidence first, because a delay found from a reflection or
+/// from noise is worse than no delay at all and the number is the only clue.
+#[tauri::command]
+fn find_delay(state: State<'_, AppState>) -> Result<Option<DelayEstimate>, String> {
+    state.with_analysis(|a| a.transfer.find_delay())
+}
+
+#[tauri::command]
+fn set_delay_samples(state: State<'_, AppState>, samples: u32) -> Result<(), String> {
+    state.with_analysis(|a| a.transfer.set_delay_samples(samples as usize))
+}
+
+/// The impulse response, for display. Downsampled by peak-picking if it is
+/// longer than the caller asked for: a 65536-point response drawn into 800
+/// pixels is 80 samples per pixel, and taking every 80th would miss the peak
+/// entirely and draw a flat line where the arrival is.
+#[tauri::command]
+fn impulse_response(state: State<'_, AppState>, max_points: usize) -> Result<Vec<f32>, String> {
+    let ir = state.with_analysis(|a| a.transfer.impulse_response())?;
+    let max_points = max_points.clamp(64, 8192);
+    if ir.len() <= max_points {
+        return Ok(ir);
+    }
+    let stride = ir.len().div_ceil(max_points);
+    Ok(ir
+        .chunks(stride)
+        .map(|c| {
+            c.iter()
+                .copied()
+                .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                .unwrap_or(0.0)
+        })
+        .collect())
 }
 
 fn now_rfc3339() -> String {
@@ -336,7 +489,7 @@ pub fn run() {
             }
 
             app.manage(AppState {
-                session: Mutex::new(Session::new(settings.engine.clone())),
+                session: Mutex::new(Session::new(settings.engine.clone(), settings.transfer)),
                 settings: Mutex::new(settings),
                 settings_path,
             });
@@ -361,6 +514,15 @@ pub fn run() {
             clear_calibration,
             current_calibration,
             save_layout,
+            list_output_devices,
+            set_generator,
+            set_reference,
+            set_transfer_config,
+            transfer_plan,
+            reset_transfer,
+            find_delay,
+            set_delay_samples,
+            impulse_response,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LEQtion");

@@ -6,6 +6,9 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+# The signal generator, so a measurement can be run against a known level with
+# no device at all — see `synthetic`. Pure DSP: no I/O, nothing circular.
+leqtion-dsp = { path = "../leqtion-dsp" }
 cpal = "0.18"
 # Lock-free SPSC ring. The audio callback must not allocate, block or take a
 # lock, so it cannot touch the engine directly — it pushes here instead.

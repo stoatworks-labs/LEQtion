@@ -32,17 +32,21 @@
 pub mod bands;
 pub mod calibration;
 pub mod engine;
+pub mod generator;
 pub mod leq;
 pub mod spectrum;
 pub mod spl;
+pub mod transfer;
 pub mod weighting;
 pub mod window;
 
 pub use bands::{Band, BandPlan, Fraction};
 pub use calibration::{Calibration, CalibrationStatus, CalibrationTarget};
 pub use engine::{ChannelSelect, Engine, EngineConfig, Frame, SplReading};
+pub use generator::{Generator, GeneratorConfig, Signal};
 pub use leq::{LeqReading, LeqSpec, LeqWindow};
 pub use spectrum::{Averaging, SpectrumAnalyser, SpectrumConfig, FFT_SIZES};
 pub use spl::TimeWeighting;
+pub use transfer::{DelayEstimate, TransferConfig, TransferFunction, TransferPlan, TransferReading};
 pub use weighting::Weighting;
 pub use window::WindowKind;

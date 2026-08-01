@@ -8,7 +8,7 @@ scaffolding.
 
 ## 1. What this is
 
-A **desktop sound level meter and real-time analyser**. Tauri v2 shell, React + TypeScript
+A **desktop sound level meter and dual-channel analyser**. Tauri v2 shell, React + TypeScript
 frontend, Rust doing every part of the measurement. Public repo, MIT.
 
 The product is the *numbers*. The tiles are how they get looked at, but a bug in the UI is
@@ -32,7 +32,9 @@ src-tauri/
   src/lib.rs                 Tauri commands. Thin — no analysis, ever.
   src/session.rs             Audio → analysis thread → frame events.
   src/settings.rs            One JSON file, written atomically.
-  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 84 tests.
+  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 117 tests.
+                               generator.rs  signal sources
+                               transfer.rs   multi-time-window TF, coherence, delay
   crates/leqtion-audio/      cpal capture, host/device enumeration, lock-free ring.
   crates/diag/               Vendored fleet logging/crash crate. Don't edit here.
   examples/meter.rs          Whole chain, no window. The end-to-end check.
@@ -59,7 +61,7 @@ npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 96 tests
+cd src-tauri && cargo test --workspace     # 129 tests
 ```
 
 ```bash
@@ -110,7 +112,26 @@ It copies into a lock-free ring and nothing else. If the ring overflows, frames 
 as dropped and the UI says the measurement is invalid. Never "fix" a dropout by making the
 callback wait.
 
-### 4.6 Band levels come from the plan the engine returned
+### 4.6 Coherence is the transfer function's honesty feature
+
+Never draw a transfer function without it. The magnitude trace breaks where coherence falls
+below the floor, and points are faded in proportion. Do not add a display path that hides
+it, and do not report coherence before `MIN_FRAMES_FOR_COHERENCE` — a single frame always
+reads exactly 1.0 and that is not a measurement, it is an artefact of the arithmetic.
+
+### 4.7 The reference is delay-compensated, never the measurement
+
+The measurement always arrives later; delaying it instead would mean predicting the future.
+Changing the delay throws away every average, because the spectra accumulated so far were
+measured against a differently aligned reference.
+
+### 4.8 The generator never starts by itself
+
+`Signal::Off` is the default and is not restored from settings on launch. Level and
+band-limiting persist; the signal does not. Opening a measurement app must never put pink
+noise into a rig before anyone has touched anything.
+
+### 4.9 Band levels come from the plan the engine returned
 
 `plan_revision` on a frame changes when the band table changes. The UI refetches rather than
 building its own. `bands_db.length === plan.bands.length` is checked before drawing.
@@ -128,6 +149,17 @@ Evaluating A-weighting at 31.5 Hz gives −39.53 dB against a published −39.4;
 **`F_MIN`/`F_MAX` in `bands.rs` are 19 and 20500, not 20 and 20000.** The band everyone calls
 "20 Hz" has an exact base-2 centre of 19.686 Hz. Tightening these to round numbers silently
 drops both end bands from a 1/3-octave display.
+
+**Input and output can be different devices.** On a laptop the input is "MacBook Pro
+Microphone" and the output is "MacBook Pro Speakers", so asking for an output with the
+input's name fails. The session picks the output device up front — same name if one exists,
+default otherwise — and sets `clock_shared` accordingly. Two devices means two clocks, so
+the internal reference drifts; the UI says so. On any real interface both sides share a
+name and the fast path applies. `capture --list` prints both lists.
+
+**The pink normalisation constant is measured, not derived.** `PINK_NORMALISATION` is the
+reciprocal of the pinking filter's RMS gain, measured over four million samples. It does not
+depend on the sample rate. If pink noise comes out at the wrong level, this is the number.
 
 **cpal 0.18 renamed things.** `device.description()?.name()`, not `device.name()`.
 `SampleRate` is a plain `u32` alias. One `cpal::Error`, no `StreamError`.

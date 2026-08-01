@@ -616,3 +616,73 @@ canvas.fill {
   background: var(--accent);
   transition: width 120ms linear;
 }
+
+/* ---------- generator ---------- */
+
+.tile-body.gen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+  padding: 8px 12px;
+}
+
+.gen-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.gen-row input[type='number'] {
+  width: 76px;
+}
+
+.gen-level {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gen-level input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 60px;
+  accent-color: var(--accent);
+}
+
+.gen-value {
+  font: 600 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+  text-align: right;
+}
+
+.gen-unit {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* ---------- transfer function ---------- */
+
+.delay-tools {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+}
+
+/*
+ * An empty-state note over a canvas rather than instead of it: the canvas keeps
+ * its size, so switching a reference on does not make the tile jump.
+ */
+.tile-empty.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  background: rgba(11, 13, 18, 0.72);
+}

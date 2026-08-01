@@ -3,6 +3,8 @@ import type { ComponentType } from 'react';
 import type { Tile, TileKind } from '../state/store';
 
 import { BargraphSettings, BargraphTile } from './BargraphTile';
+import { GeneratorSettings, GeneratorTile } from './GeneratorTile';
+import { TransferSettings, TransferTile } from './TransferTile';
 import { LeqSettings, LeqTile } from './LeqTile';
 import { RtaSettings, RtaTile } from './RtaTile';
 import { SpectrographSettings, SpectrographTile } from './SpectrographTile';
@@ -51,6 +53,20 @@ export const TILE_TYPES: TileType[] = [
     blurb: 'Time-weighted level, with max, min and peak.',
     Body: SplTile,
     Settings: SplSettings,
+  },
+  {
+    kind: 'transfer',
+    title: 'Transfer function',
+    blurb: 'Magnitude, phase and coherence against a reference.',
+    Body: TransferTile,
+    Settings: TransferSettings,
+  },
+  {
+    kind: 'generator',
+    title: 'Generator',
+    blurb: 'Pink, white, sine or sweep, out of a chosen channel.',
+    Body: GeneratorTile,
+    Settings: GeneratorSettings,
   },
   {
     kind: 'leq',

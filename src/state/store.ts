@@ -22,10 +22,23 @@ import {
   type EngineConfig,
   type HostInfo,
   type LeqSpec,
+  type GeneratorConfig,
+  type ReferenceSource,
   type SessionStatus,
+  type TransferConfig,
+  type TransferPlan,
+  DEFAULT_GENERATOR,
+  DEFAULT_TRANSFER,
 } from '../types';
 
-export type TileKind = 'rta' | 'spectrograph' | 'bargraph' | 'spl' | 'leq';
+export type TileKind =
+  | 'rta'
+  | 'spectrograph'
+  | 'bargraph'
+  | 'spl'
+  | 'leq'
+  | 'transfer'
+  | 'generator';
 
 export interface Tile {
   id: string;
@@ -61,6 +74,8 @@ export const MIN_SIZE: Record<TileKind, { w: number; h: number }> = {
   bargraph: { w: 1, h: 3 },
   spl: { w: 2, h: 2 },
   leq: { w: 2, h: 1 },
+  transfer: { w: 4, h: 3 },
+  generator: { w: 3, h: 2 },
 };
 
 export const DEFAULT_SIZE: Record<TileKind, { w: number; h: number }> = {
@@ -69,6 +84,8 @@ export const DEFAULT_SIZE: Record<TileKind, { w: number; h: number }> = {
   bargraph: { w: 2, h: 5 },
   spl: { w: 4, h: 3 },
   leq: { w: 2, h: 2 },
+  transfer: { w: 8, h: 5 },
+  generator: { w: 4, h: 2 },
 };
 
 /**
@@ -125,6 +142,11 @@ interface Store {
 
   config: EngineConfig;
   plan: BandPlan | null;
+  outputs: DeviceInfo[];
+  generator: GeneratorConfig;
+  generatorChannel: number;
+  transfer: TransferConfig;
+  transferPlan: TransferPlan | null;
   calibration: Calibration | null;
   calibrationTargets: CalibrationTarget[];
 
@@ -144,6 +166,11 @@ interface Store {
   refreshCalibration: () => Promise<void>;
   resetMeasurement: () => Promise<void>;
   resetPeakHold: () => Promise<void>;
+  setGenerator: (update: (g: GeneratorConfig) => GeneratorConfig) => Promise<void>;
+  setGeneratorChannel: (channel: number) => Promise<void>;
+  setReference: (reference: ReferenceSource) => Promise<void>;
+  setTransfer: (update: (t: TransferConfig) => TransferConfig) => Promise<void>;
+  resetTransfer: () => Promise<void>;
 
   addLeq: (spec: Omit<LeqSpec, 'id'>) => Promise<string>;
   updateLeq: (id: string, patch: Partial<LeqSpec>) => Promise<void>;
@@ -191,13 +218,25 @@ export const useStore = create<Store>((set, get) => ({
 
   hosts: [],
   devices: [],
-  status: { running: false, droppedFrames: 0, streamErrors: 0 },
+  status: {
+    running: false,
+    droppedFrames: 0,
+    streamErrors: 0,
+    referenceUnderruns: 0,
+    reference: { kind: 'off' },
+    clockShared: false,
+  },
   selectedHost: null,
   selectedDevice: null,
   selectedRate: null,
 
   config: DEFAULT_ENGINE_CONFIG,
   plan: null,
+  outputs: [],
+  generator: DEFAULT_GENERATOR,
+  generatorChannel: 0,
+  transfer: DEFAULT_TRANSFER,
+  transferPlan: null,
   calibration: null,
   calibrationTargets: [],
 
@@ -222,6 +261,11 @@ export const useStore = create<Store>((set, get) => ({
         devices: s.devices,
         status: s.status,
         plan: s.plan,
+        transferPlan: s.transferPlan,
+        outputs: s.outputs,
+        generator: s.settings.generator ?? DEFAULT_GENERATOR,
+        generatorChannel: s.settings.generatorChannel ?? 0,
+        transfer: s.settings.transfer ?? DEFAULT_TRANSFER,
         calibrationTargets: s.calibrationTargets,
         selectedHost: s.settings.host,
         selectedDevice: s.settings.device,
@@ -316,6 +360,51 @@ export const useStore = create<Store>((set, get) => ({
   async resetPeakHold() {
     try {
       await api.resetPeakHold();
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async setGenerator(update) {
+    const generator = update(get().generator);
+    set({ generator });
+    try {
+      await api.setGenerator(generator, get().generatorChannel);
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async setGeneratorChannel(generatorChannel) {
+    set({ generatorChannel });
+    try {
+      await api.setGenerator(get().generator, generatorChannel);
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async setReference(reference) {
+    try {
+      set({ status: await api.setReference(reference) });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async setTransfer(update) {
+    const transfer = update(get().transfer);
+    set({ transfer });
+    try {
+      set({ transferPlan: await api.setTransferConfig(transfer) });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async resetTransfer() {
+    try {
+      await api.resetTransfer();
     } catch (e) {
       set({ error: errorText(e) });
     }
