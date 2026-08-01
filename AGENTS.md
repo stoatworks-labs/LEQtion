@@ -61,7 +61,7 @@ npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 129 tests
+cd src-tauri && cargo test --workspace     # 134 tests
 ```
 
 ```bash
