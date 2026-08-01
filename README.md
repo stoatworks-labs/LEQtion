@@ -16,6 +16,14 @@ time-weighted SPL, as many user-defined LEQs as you want, a signal generator, an
 transfer function measurement with phase and coherence — arranged on a grid of tiles you
 lay out yourself.
 
+![LEQtion measuring pink noise from its own generator](docs/screenshots/measuring-pink-noise.png)
+
+*Measuring its own signal generator — pink noise at −20 dBFS, taken through the `Signal
+generator` backend with no hardware in the chain. Pink noise is flat per octave, so a
+fractional-octave RTA reading flat across the band is the check: a wrong window, a wrong
+normalisation or a wrong band integration would show as a tilt or a step instead. LAF and
+LAeq,5min agree at −23.9, and every level says dBFS because nothing here is calibrated.*
+
 **Status: alpha.** The measurement core is well tested and the app runs; it has not yet
 been used in anger on a show.
 
@@ -44,6 +52,14 @@ been used in anger on a show.
 - **Delay finding** — locates the arrival from the impulse response, sub-sample
   interpolated, and reports it in milliseconds, metres and samples with a confidence
   figure.
+- **Signal generator as an input** — the same signals are also offered as a *backend*,
+  feeding the analyser directly with no device in the chain. It is how you check the
+  meter itself: pink noise reads flat on a fractional-octave display, so a wrong window,
+  a wrong normalisation or a wrong band integration shows up as a tilt rather than as a
+  plausible curve. It runs on a machine with no interface, no microphone and no
+  microphone permission. Calibration is refused while it is open — there is no capsule
+  in the chain, and an offset taken from a synthetic sine would be a number invented out
+  of nothing.
 - **Backends** — Core Audio, WASAPI, ALSA and JACK out of the box; ASIO behind a build
   flag ([docs/asio.md](docs/asio.md)).
 

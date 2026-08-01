@@ -106,6 +106,20 @@ meant to agree.
 `Frame::calibrated` is false until a calibration is loaded, and every readout that shows a
 level also shows whether it is dB SPL or dBFS. Do not add a display path that omits it.
 
+### 4.4a The synthetic input can never be calibrated
+
+`leqtion-audio::synthetic` offers the generator as a *backend*, so the analyser can be run
+against a known level with no device in the chain. `begin_calibration` and
+`accept_calibration` both refuse while it is open, and that refusal must stay.
+
+The reason is not tidiness. A generated 1 kHz sine passes every gate the calibration
+workflow has — perfectly steady, exactly on frequency, unclipped, far above the noise
+floor — so without the guard it would sail through and produce a full-scale-to-SPL offset
+invented out of nothing, which every reading afterwards would inherit and which
+`settings.json` would keep. The engine cannot catch this: from inside the analysis there is
+no difference between a calibrator on a capsule and a sine on a wire. Only the source
+knows, which is why the check lives in `src/lib.rs` and not in `leqtion-dsp`.
+
 ### 4.5 The audio callback does not allocate, lock or block
 
 It copies into a lock-free ring and nothing else. If the ring overflows, frames are counted
@@ -176,12 +190,18 @@ the callback fires regardless. `examples/capture.rs` detects and explains this.
 
 Verified:
 
-- The DSP, extensively, against synthetic signals with known answers (84 tests).
+- The DSP, extensively, against synthetic signals with known answers (117 tests).
 - The audio path against real Core Audio hardware — enumeration across Dante, NDI, L-ISA and
   Pro Tools bridge devices, and capture from the built-in microphone with zero drops.
 - The whole chain end to end via `examples/meter.rs`: A < C < Z on room noise, sliding LEQ
   tracking, elapsed LEQ settling, peak held.
 - The app builds, bundles, launches, and lays out its tiles.
+- **The running GUI, on the synthetic input.** The app was driven from the `Signal
+  generator` backend on pink noise at −20 dBFS at 48 kHz: the RTA reads flat across the
+  band, which is what pink noise must look like on a constant-percentage-bandwidth
+  display, and LAF and LAeq agree with each other to 0.1 dB. That exercises the whole
+  chain — capture source, ring, analysis thread, engine, frame events, every tile — with
+  no hardware at all.
 
 **Not** verified:
 
@@ -190,8 +210,16 @@ Verified:
   only; no calibrator has been connected.
 - ASIO. It compiles behind a feature flag and has never carried audio — the only Windows
   machine here is ARM64, where ASIO drivers barely exist. See `docs/asio.md`.
-- Clicking through the running GUI. Assistive access is denied to automation on this
-  machine, so the UI was verified by screenshot and by driving the same engine from
-  `examples/meter.rs`, not by synthetic clicks.
+- Anything downstream of a converter. No signal has been round-tripped through an
+  interface, a loopback cable or a loudspeaker, so the transfer function and the delay
+  finder have only ever seen the internal tap.
+
+Note on driving the GUI: coordinate clicking (`click at`) fails on this machine with
+AppleScript error −25204, which is what "assistive access is denied" looks like and is why
+an earlier version of this section said the UI could not be automated. It can. The
+webview publishes its controls to the accessibility tree, so
+`click button "Start" of group 1 of UI element 1 of scroll area 1 of …` works where a
+coordinate click does not. Prefer that over synthetic clicks, and prefer `examples/meter.rs`
+over both when the question is about numbers rather than about the UI.
 
 Keep this section honest. It is the part someone will rely on.
