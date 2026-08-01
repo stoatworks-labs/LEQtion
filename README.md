@@ -194,6 +194,13 @@ Tests:
 npm test && (cd src-tauri && cargo test --workspace)
 ```
 
+## What still needs real hardware
+
+Everything is verified against synthetic signals; nothing has been checked against a
+reference meter, a calibrator or a loudspeaker. [`docs/field-test.md`](docs/field-test.md)
+is the checklist for doing that, in the order the steps depend on each other — an
+electrical loopback before anything acoustic, and calibration before either.
+
 ## Licence
 
 MIT.

@@ -231,8 +231,44 @@ fn reset_peak_hold(state: State<'_, AppState>) -> Result<(), String> {
     state.with_analysis(|a| a.engine.reset_peak_hold())
 }
 
+/// True if the open input is the software generator rather than a device.
+///
+/// Split out as a plain function of the host name so it can be tested without
+/// standing up a session.
+fn is_synthetic_source(host: Option<&str>) -> bool {
+    host.is_some_and(|h| h.eq_ignore_ascii_case(leqtion_audio::synthetic::HOST_ID))
+}
+
+/// Calibration needs a microphone, and the generator is not one.
+///
+/// This matters more than it looks. A generated 1 kHz sine satisfies every gate
+/// the calibration workflow has — it is perfectly steady, exactly on frequency,
+/// unclipped and far above the noise floor — so it would sail through and
+/// produce a full-scale-to-SPL offset invented out of nothing, which every
+/// reading afterwards would silently inherit. The engine cannot catch this,
+/// because from inside the analysis there is no difference between a calibrator
+/// on a capsule and a sine on a wire. Only the source knows.
+fn refuse_calibration_without_a_microphone(state: &AppState) -> Result<(), String> {
+    let host = state
+        .session
+        .lock()
+        .map_err(|_| "the session lock is poisoned; restart LEQtion")?
+        .status()
+        .stream
+        .map(|s| s.host);
+
+    if is_synthetic_source(host.as_deref()) {
+        return Err("The signal generator is not an acoustic reference — there is no \
+                    microphone in the chain, so there is nothing to calibrate against. \
+                    Open a real input and use a hardware calibrator."
+            .into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn begin_calibration(state: State<'_, AppState>, target: CalibrationTarget) -> Result<(), String> {
+    refuse_calibration_without_a_microphone(&state)?;
     state.with_analysis(|a| a.engine.begin_calibration(target))
 }
 
@@ -254,6 +290,11 @@ fn cancel_calibration(state: State<'_, AppState>) -> Result<(), String> {
 /// can be refused.
 #[tauri::command]
 fn accept_calibration(state: State<'_, AppState>) -> Result<Calibration, String> {
+    // Also checked on accept, not only on begin: the source can change under a
+    // dialog that is already open, and this is the call that writes an offset
+    // to disk for every future session on that device name.
+    refuse_calibration_without_a_microphone(&state)?;
+
     let device = {
         let session = state
             .session
@@ -526,4 +567,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running LEQtion");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_generator_is_recognised_as_not_a_microphone() {
+        assert!(is_synthetic_source(Some(
+            leqtion_audio::synthetic::HOST_ID
+        )));
+        assert!(is_synthetic_source(Some("generator")));
+    }
+
+    /// The check must not accidentally cover a real input. Refusing to
+    /// calibrate a working microphone would be the more damaging failure of the
+    /// two, because the user would have no way round it.
+    #[test]
+    fn a_real_host_is_still_calibratable() {
+        assert!(!is_synthetic_source(Some("CoreAudio")));
+        assert!(!is_synthetic_source(Some("WASAPI")));
+        assert!(!is_synthetic_source(Some("Asio")));
+        assert!(!is_synthetic_source(None));
+    }
 }
