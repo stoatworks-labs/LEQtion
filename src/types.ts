@@ -63,6 +63,7 @@ export interface EngineConfig {
   timeWeighting: TimeWeighting;
   channel: ChannelSelect;
   leqs: LeqSpec[];
+  history: HistoryConfig;
 }
 
 /** `leqtion_dsp::bands::Band` */
@@ -293,6 +294,47 @@ export interface DelayEstimate {
 }
 
 /** `leqtion_audio::CaptureOptions` */
+/** `leqtion_dsp::history::HistoryConfig` */
+export interface HistoryConfig {
+  intervalSeconds: number;
+  spanSeconds: number;
+}
+
+/** `leqtion_dsp::history::SeriesInfo` — flattened, so `kind` sits alongside. */
+export interface SeriesInfo {
+  id: string;
+  label: string;
+  kind: 'spl' | 'peak' | 'leq';
+  weighting?: Weighting;
+  timeWeighting?: TimeWeighting;
+  /** The LEQ's own id, on `leq` series. Not the series id — see history.rs. */
+  leqId?: string;
+}
+
+/**
+ * `leqtion_dsp::history::HistoryPoint` — one interval, not one sample.
+ *
+ * `min` and `max` are the extremes the level reached *inside* the interval, so
+ * a chart that draws only `mean` is throwing away the peaks the history exists
+ * to keep.
+ */
+export interface HistoryPoint {
+  t: number;
+  min: number;
+  mean: number;
+  max: number;
+}
+
+/** `logger::LogStatus` */
+export interface LogStatus {
+  running: boolean;
+  path?: string;
+  rows: number;
+  startedAt?: string;
+  intervalSeconds: number;
+  error?: string;
+}
+
 export interface CaptureOptions {
   host?: string | null;
   device?: string | null;
@@ -345,4 +387,5 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   timeWeighting: 'fast',
   channel: { kind: 'channel', index: 0 },
   leqs: [],
+  history: { intervalSeconds: 1, spanSeconds: 3600 },
 };

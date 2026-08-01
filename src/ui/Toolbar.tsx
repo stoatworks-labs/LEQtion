@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
+import { api, errorText } from '../lib/ipc';
 import { useStore } from '../state/store';
 import { TILE_TYPES } from '../tiles/registry';
 import { levelName } from '../lib/format';
-import { FFT_SIZES, FRACTIONS, WINDOWS, type Averaging, type Fraction, type LeqWindow } from '../types';
+import { FFT_SIZES, FRACTIONS, WINDOWS, type Averaging, type Fraction, type LeqWindow, type LogStatus } from '../types';
 
 /** Window lengths offered when adding an LEQ, in seconds. */
 const LEQ_PRESETS: { label: string; window: LeqWindow }[] = [
@@ -189,11 +190,72 @@ export function Toolbar() {
   );
 }
 
+/**
+ * Start and stop the CSV log.
+ *
+ * In the toolbar rather than on a tile, because the log is a property of the
+ * measurement and not of anything on screen: closing the chart must not stop
+ * the recording, and a log that only ran while a particular tile was open would
+ * have holes in it that nothing explained.
+ *
+ * The row count is shown because it is the only honest confirmation that
+ * anything is being written — a path on its own says a file was opened, not
+ * that a measurement is going into it.
+ */
+function LoggingButton() {
+  const [log, setLog] = useState<LogStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const running = useStore((s) => s.status.running);
+
+  useEffect(() => {
+    let live = true;
+    const poll = async () => {
+      try {
+        const s = await api.loggingStatus();
+        if (live) setLog(s);
+      } catch {
+        /* the session may not be up yet; the next poll will find it */
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  async function toggle() {
+    setError(null);
+    try {
+      setLog(log?.running ? await api.stopLogging() : await api.startLogging());
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className={log?.running ? 'logging' : undefined}
+        disabled={!running && !log?.running}
+        onClick={() => void toggle()}
+        title={log?.path ?? 'Write the measurement to a CSV, one row per interval'}
+      >
+        {log?.running ? `Stop logging · ${log.rows} rows` : 'Start logging'}
+      </button>
+      {error && <span className="chip bad">{error}</span>}
+    </>
+  );
+}
+
 function ResetButtons() {
   const resetMeasurement = useStore((s) => s.resetMeasurement);
   const resetPeakHold = useStore((s) => s.resetPeakHold);
   return (
     <>
+      <LoggingButton />
       <button type="button" onClick={() => void resetPeakHold()}>
         Clear peaks
       </button>

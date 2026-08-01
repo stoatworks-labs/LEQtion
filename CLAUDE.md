@@ -58,4 +58,8 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
   the floor; points fade in proportion. Coherence before four averages is meaningless.
 - **The generator defaults to Off and is never restored on launch.** Level persists, the
   signal does not.
+- **A history point is an interval, not a sample**, and downsampling keeps the extremes.
+  A trace that gets flatter as you zoom out is a bug, not a rendering choice.
+- **The log writes on the history's interval, never its own clock**, and every row states
+  whether it is calibrated and how many frames have been dropped.
 - Public repo, MIT. "Commit" = commit **and** push.

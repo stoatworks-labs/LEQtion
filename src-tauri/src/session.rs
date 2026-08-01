@@ -40,6 +40,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use leqtion_audio::{Capture, CaptureOptions, Output, OutputOptions, StreamInfo};
+use crate::logger::Logger;
 use leqtion_dsp::engine::{fold_channels, Engine, EngineConfig, Frame};
 use leqtion_dsp::generator::{Generator, GeneratorConfig};
 use leqtion_dsp::transfer::{TransferConfig, TransferFunction, TransferReading};
@@ -87,6 +88,16 @@ pub struct Analysis {
     pub engine: Engine,
     pub transfer: TransferFunction,
     pub reference: ReferenceSource,
+    /// The open log, if one is running.
+    ///
+    /// Kept here rather than beside the session so it is behind the same lock as
+    /// the engine: a row is written from the engine's own history in the same
+    /// critical section that produced it, which is what makes "the log is the
+    /// chart" true rather than nearly true.
+    pub log: Option<Logger>,
+    /// Cumulative dropped frames as last reported by the capture, so a row can
+    /// carry it without the analysis thread reaching for the session lock.
+    pub dropped_frames: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -155,6 +166,8 @@ impl Session {
                 engine: Engine::new(config, 48000.0),
                 transfer: TransferFunction::new(transfer, 48000.0),
                 reference: ReferenceSource::Off,
+                log: None,
+                dropped_frames: 0,
             })),
             capture: None,
             output: None,
@@ -326,6 +339,11 @@ impl Session {
 
         let analysis = Arc::clone(&self.analysis);
         let underruns = Arc::clone(&self.reference_underruns);
+        // The log records dropped frames per row, and the count lives on the
+        // capture's stats. Cloned into the worker so a row can carry it without
+        // the analysis thread reaching back for the session lock it is holding
+        // no part of.
+        let capture_stats = Arc::clone(&capture.stats);
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let channels = info.channels as usize;
@@ -358,7 +376,27 @@ impl Session {
                             let frames = n / channels;
 
                             if let Ok(mut a) = analysis.lock() {
-                                a.engine.push_interleaved(&buf[..n], channels);
+                                a.dropped_frames =
+                                    capture_stats.dropped_frames.load(Ordering::Relaxed);
+                                let interval_done =
+                                    a.engine.push_interleaved(&buf[..n], channels);
+
+                                // One row per completed interval, taken from the
+                                // engine's own history. A write failure stops the
+                                // log and leaves the measurement running: losing a
+                                // file is bad, losing the measurement because a
+                                // disk filled up would be worse.
+                                if interval_done && a.log.is_some() {
+                                    let latest = a.engine.history_latest();
+                                    let calibrated = a.engine.frame().calibrated;
+                                    let dropped = a.dropped_frames;
+                                    if let Some(log) = a.log.as_mut() {
+                                        if let Err(e) = log.write(&latest, calibrated, dropped) {
+                                            tracing::error!("logging stopped: {e}");
+                                            a.log = None;
+                                        }
+                                    }
+                                }
 
                                 match a.reference {
                                     ReferenceSource::Off => {

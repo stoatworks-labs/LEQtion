@@ -16,6 +16,7 @@
 //! | [`spl`] | Fast/Slow/Impulse detectors, peaks, min/max |
 //! | [`leq`] | Sliding and elapsed equivalent levels |
 //! | [`calibration`] | Hardware calibrator workflow and the dBFS → dB SPL offset |
+//! | [`history`] | Levels over time, bucketed per interval — the chart and the log |
 //! | [`engine`] | The one place that ties all of the above to a stream of samples |
 //!
 //! ## Conventions that hold everywhere in this crate
@@ -33,6 +34,7 @@ pub mod bands;
 pub mod calibration;
 pub mod engine;
 pub mod generator;
+pub mod history;
 pub mod leq;
 pub mod spectrum;
 pub mod spl;
@@ -44,6 +46,7 @@ pub use bands::{Band, BandPlan, Fraction};
 pub use calibration::{Calibration, CalibrationStatus, CalibrationTarget};
 pub use engine::{ChannelSelect, Engine, EngineConfig, Frame, SplReading};
 pub use generator::{Generator, GeneratorConfig, Signal};
+pub use history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
 pub use leq::{LeqReading, LeqSpec, LeqWindow};
 pub use spectrum::{Averaging, SpectrumAnalyser, SpectrumConfig, FFT_SIZES};
 pub use spl::TimeWeighting;

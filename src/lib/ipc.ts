@@ -28,8 +28,11 @@ import type {
   EngineConfig,
   Frame,
   GeneratorConfig,
+  HistoryPoint,
   HostInfo,
+  LogStatus,
   ReferenceSource,
+  SeriesInfo,
   SessionStatus,
   Startup,
   TransferConfig,
@@ -58,6 +61,13 @@ export const api = {
   clearCalibration: () => invoke<void>('clear_calibration'),
   currentCalibration: () => invoke<Calibration | null>('current_calibration'),
   saveLayout: (layout: unknown) => invoke<void>('save_layout', { layout }),
+
+  historySeries: () => invoke<SeriesInfo[]>('history_series'),
+  historyView: (id: string, seconds: number, maxPoints: number) =>
+    invoke<HistoryPoint[]>('history_view', { id, seconds, maxPoints }),
+  startLogging: (path?: string) => invoke<LogStatus>('start_logging', { path: path ?? null }),
+  stopLogging: () => invoke<LogStatus>('stop_logging'),
+  loggingStatus: () => invoke<LogStatus>('logging_status'),
 
   listOutputDevices: (host?: string) =>
     invoke<DeviceInfo[]>('list_output_devices', { host: host ?? null }),

@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import type { Tile, TileKind } from '../state/store';
 
 import { BargraphSettings, BargraphTile } from './BargraphTile';
+import { ChartSettings, ChartTile } from './ChartTile';
 import { GeneratorSettings, GeneratorTile } from './GeneratorTile';
 import { TransferSettings, TransferTile } from './TransferTile';
 import { LeqSettings, LeqTile } from './LeqTile';
@@ -67,6 +68,13 @@ export const TILE_TYPES: TileType[] = [
     blurb: 'Pink, white, sine or sweep, out of a chosen channel.',
     Body: GeneratorTile,
     Settings: GeneratorSettings,
+  },
+  {
+    kind: 'chart',
+    title: 'Level history',
+    blurb: 'LEQ or time-weighted SPL over time, as a line.',
+    Body: ChartTile,
+    Settings: ChartSettings,
   },
   {
     kind: 'leq',

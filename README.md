@@ -12,9 +12,9 @@
 > audio. LEQtion is **not a certified sound level meter** and makes no conformance claim.
 
 A desktop sound level meter and dual-channel analyser: RTA, spectrograph, bargraph,
-time-weighted SPL, as many user-defined LEQs as you want, a signal generator, and
-transfer function measurement with phase and coherence — arranged on a grid of tiles you
-lay out yourself.
+time-weighted SPL, as many user-defined LEQs as you want, level history charts, CSV
+logging, a signal generator, and transfer function measurement with phase and coherence —
+arranged on a grid of tiles you lay out yourself.
 
 [![Watch LEQtion running — 45 seconds](docs/video-thumb.png)](https://www.youtube.com/watch?v=Qe8D6juRCU4)
 
@@ -47,6 +47,15 @@ been used in anger on a show.
   or a preset from 1 second to an hour, or "since reset") and its own **weighting**
   (A, C or Z). They run in the engine, so an LEQ keeps integrating whether or not a tile
   is showing it.
+- **Level history** — any of those levels over time, as a line: LEQ, or Fast, Slow and
+  Impulse SPL, or peak, on whichever weighting you want. Each point covers a whole
+  interval and the band around the line is the min and max *inside* it, so a transient
+  between ticks is on the chart rather than missed. Zooming out buckets the points in the
+  engine and keeps the extremes — the trace never flattens as you look further back.
+- **Data logging** — write the measurement to a CSV, one row per interval, every series
+  at once. The rows are the chart's own points rather than a second sampling on a
+  different clock. Every row states whether it is calibrated and how many frames have
+  been dropped, so a log that covers a gap in the audio says so in the file.
 - **Calibration** — against a hardware acoustic calibrator, 94 or 114 dB at 1 kHz.
 - **Tiles** — add, remove, drag and resize. The layout persists.
 - **Generator** — pink noise, white noise, sine, and a repeating log sweep, out of a

@@ -33,6 +33,7 @@ import {
 
 export type TileKind =
   | 'rta'
+  | 'chart'
   | 'spectrograph'
   | 'bargraph'
   | 'spl'
@@ -74,6 +75,7 @@ export const MIN_SIZE: Record<TileKind, { w: number; h: number }> = {
   bargraph: { w: 1, h: 3 },
   spl: { w: 2, h: 2 },
   leq: { w: 2, h: 1 },
+  chart: { w: 4, h: 2 },
   transfer: { w: 4, h: 3 },
   generator: { w: 3, h: 2 },
 };
@@ -84,6 +86,7 @@ export const DEFAULT_SIZE: Record<TileKind, { w: number; h: number }> = {
   bargraph: { w: 2, h: 5 },
   spl: { w: 4, h: 3 },
   leq: { w: 2, h: 2 },
+  chart: { w: 8, h: 4 },
   transfer: { w: 8, h: 5 },
   generator: { w: 4, h: 2 },
 };

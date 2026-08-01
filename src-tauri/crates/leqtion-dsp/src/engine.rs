@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bands::BandPlan;
 use crate::calibration::{Calibration, CalibrationRun, CalibrationSample, CalibrationStatus, CalibrationTarget};
+use crate::history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
 use crate::leq::{LeqAccumulator, LeqReading, LeqSpec};
 use crate::spectrum::{SpectrumAnalyser, SpectrumConfig};
 use crate::spl::{
@@ -54,6 +55,10 @@ pub struct EngineConfig {
     pub time_weighting: TimeWeighting,
     pub channel: ChannelSelect,
     pub leqs: Vec<LeqSpec>,
+    /// How the level history is recorded. Its own settings rather than the
+    /// chart tile's, because the history exists whether a chart does or not.
+    #[serde(default)]
+    pub history: HistoryConfig,
 }
 
 impl Default for EngineConfig {
@@ -63,15 +68,24 @@ impl Default for EngineConfig {
             time_weighting: TimeWeighting::Fast,
             channel: ChannelSelect::default(),
             leqs: Vec::new(),
+            history: HistoryConfig::default(),
         }
     }
 }
 
-/// One weighted signal path: filter, detector, min/max and peak.
+/// One weighted signal path: filter, detectors, min/max and peak.
 struct Path {
     weighting: Weighting,
     filter: WeightingFilter,
-    detector: LevelDetector,
+    /// One detector per time weighting, in [`TimeWeighting::ALL`] order.
+    ///
+    /// All three run all the time, not just the one on the readout. The history
+    /// chart offers Fast *and* Slow as separate traces, and a detector that only
+    /// existed while it was selected would draw a line starting from whenever
+    /// the user picked it — with the earlier part of the same measurement
+    /// missing for no reason the chart could explain. Three one-pole filters per
+    /// weighting is nothing next to the weighting filter they share.
+    detectors: [LevelDetector; 3],
     minmax: MinMax,
     peak: PeakTracker,
     scratch: Vec<f32>,
@@ -80,11 +94,11 @@ struct Path {
 }
 
 impl Path {
-    fn new(weighting: Weighting, time_weighting: TimeWeighting, sample_rate: f64) -> Self {
+    fn new(weighting: Weighting, sample_rate: f64) -> Self {
         Path {
             weighting,
             filter: WeightingFilter::new(weighting, sample_rate),
-            detector: LevelDetector::new(time_weighting, sample_rate),
+            detectors: TimeWeighting::ALL.map(|tw| LevelDetector::new(tw, sample_rate)),
             minmax: MinMax::default(),
             peak: PeakTracker::default(),
             scratch: Vec::new(),
@@ -92,14 +106,24 @@ impl Path {
         }
     }
 
-    fn push(&mut self, mono: &[f32]) {
+    /// The detector for one time weighting.
+    fn detector(&self, tw: TimeWeighting) -> &LevelDetector {
+        let i = TimeWeighting::ALL.iter().position(|&t| t == tw).unwrap_or(0);
+        &self.detectors[i]
+    }
+
+    fn push(&mut self, mono: &[f32], in_force: TimeWeighting) {
         self.scratch.clear();
         self.scratch.extend_from_slice(mono);
         self.filter.process_block(&mut self.scratch);
 
         self.peak.push(&self.scratch);
-        self.detector.push(&self.scratch);
-        self.minmax.push(self.detector.mean_square());
+        for d in &mut self.detectors {
+            d.push(&self.scratch);
+        }
+        // Lmax and Lmin follow the weighting on the readout, which is what a
+        // meter's max and min mean. The other detectors are for the history.
+        self.minmax.push(self.detector(in_force).mean_square());
 
         let mut sum = 0.0f64;
         for &x in &self.scratch {
@@ -162,6 +186,31 @@ pub fn fold_channels(samples: &[f32], channels: usize, select: ChannelSelect, ou
     }
 }
 
+/// Every series the history records, in the order values are fed to it.
+///
+/// One function rather than two lists, because [`History::push`] takes values
+/// positionally: a reported order that disagreed with the pushed order would
+/// label every trace with its neighbour's numbers, and nothing on screen would
+/// look wrong.
+fn history_series(leqs: &[LeqSpec]) -> Vec<SeriesKind> {
+    let mut series = Vec::new();
+    for &weighting in &Weighting::ALL {
+        for &time_weighting in &TimeWeighting::ALL {
+            series.push(SeriesKind::Spl {
+                weighting,
+                time_weighting,
+            });
+        }
+        series.push(SeriesKind::Peak { weighting });
+    }
+    for spec in leqs {
+        series.push(SeriesKind::Leq {
+            id: spec.id.clone(),
+        });
+    }
+    series
+}
+
 /// A level readout for one weighting.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -219,6 +268,10 @@ pub struct Engine {
     mono: Vec<f32>,
     elapsed: f64,
     plan_revision: u64,
+    history: History,
+    /// Reused buffer of one value per series, so the per-block feed into the
+    /// history does not allocate on the analysis thread.
+    history_values: Vec<f64>,
 }
 
 impl Engine {
@@ -226,7 +279,7 @@ impl Engine {
         let spectrum = SpectrumAnalyser::new(config.spectrum, sample_rate);
         let paths = Weighting::ALL
             .iter()
-            .map(|&w| Path::new(w, config.time_weighting, sample_rate))
+            .map(|&w| Path::new(w, sample_rate))
             .collect();
         let leqs = config
             .leqs
@@ -234,6 +287,8 @@ impl Engine {
             .cloned()
             .map(LeqAccumulator::new)
             .collect();
+        let config_history = config.history;
+        let series = history_series(&config.leqs);
 
         Engine {
             config,
@@ -247,6 +302,8 @@ impl Engine {
             mono: Vec::new(),
             elapsed: 0.0,
             plan_revision: 1,
+            history: History::new(config_history, series),
+            history_values: Vec::new(),
         }
     }
 
@@ -302,10 +359,10 @@ impl Engine {
             self.plan_revision += 1;
         }
 
-        if rate_changed || config.time_weighting != self.config.time_weighting {
+        if rate_changed {
             self.paths = Weighting::ALL
                 .iter()
-                .map(|&w| Path::new(w, config.time_weighting, sample_rate))
+                .map(|&w| Path::new(w, sample_rate))
                 .collect();
         }
 
@@ -324,18 +381,28 @@ impl Engine {
         }
         self.leqs = kept;
 
+        self.history.set_series(history_series(&config.leqs));
+        if config.history != self.config.history {
+            self.history.reconfigure(config.history);
+        }
+
         self.sample_rate = sample_rate;
         self.config = config;
     }
 
     /// Feed interleaved input.
-    pub fn push_interleaved(&mut self, samples: &[f32], channels: usize) {
+    ///
+    /// Returns true when this block completed a history interval, which is the
+    /// signal a logger writes a row on. Deriving that from a clock instead
+    /// would put the log and the chart on different time bases, and a log whose
+    /// rows do not line up with the trace they came from is worse than no log.
+    pub fn push_interleaved(&mut self, samples: &[f32], channels: usize) -> bool {
         if channels == 0 || samples.is_empty() {
-            return;
+            return false;
         }
         let frames = samples.len() / channels;
         if frames == 0 {
-            return;
+            return false;
         }
 
         fold_channels(samples, channels, self.config.channel, &mut self.mono);
@@ -348,8 +415,9 @@ impl Engine {
         // alongside it. It is put straight back; nothing else touches it.
         let mono = std::mem::take(&mut self.mono);
         self.spectrum.push(&mono);
+        let in_force = self.config.time_weighting;
         for p in &mut self.paths {
-            p.push(&mono);
+            p.push(&mono, in_force);
         }
 
         for acc in &mut self.leqs {
@@ -358,6 +426,24 @@ impl Engine {
                 acc.push(p.block_ms, seconds);
             }
         }
+
+        // Fed after the paths and the LEQ accumulators, so a point covers the
+        // block that has just been analysed rather than the one before it.
+        self.history_values.clear();
+        for p in &self.paths {
+            for &tw in &TimeWeighting::ALL {
+                self.history_values
+                    .push(self.to_level(p.detector(tw).level_dbfs()));
+            }
+            self.history_values
+                .push(self.to_level(amplitude_to_dbfs(p.peak.peak())));
+        }
+        for acc in &self.leqs {
+            self.history_values.push(self.to_level(acc.leq_dbfs()));
+        }
+        let values = std::mem::take(&mut self.history_values);
+        let completed = self.history.push(seconds, &values);
+        self.history_values = values;
 
         if let Some(run) = &mut self.run {
             let z = self
@@ -374,6 +460,7 @@ impl Engine {
         }
 
         self.mono = mono;
+        completed
     }
 
     /// Snapshot for one repaint.
@@ -385,7 +472,7 @@ impl Engine {
             .iter()
             .map(|p| SplReading {
                 weighting: p.weighting,
-                level: self.to_level(p.detector.level_dbfs()),
+                level: self.to_level(p.detector(self.config.time_weighting).level_dbfs()),
                 max: self.to_level(p.minmax.max_dbfs()),
                 min: self.to_level(p.minmax.min_dbfs()),
                 peak: self.to_level(p.peak.peak_dbfs()),
@@ -457,7 +544,54 @@ impl Engine {
         self.input_peak.reset();
         self.spectrum.reset_average();
         self.spectrum.reset_peaks();
+        self.history.reset();
         self.elapsed = 0.0;
+    }
+
+    /// Every series the history is recording, with labels for the UI.
+    ///
+    /// LEQ series are relabelled from their spec on the way out: the history
+    /// only knows a LEQ by its id, so on its own it would offer "LEQ leq-a" in a
+    /// chart's series menu, which is a key rather than a name. The engine has
+    /// the spec, so it is the one place that can say "LAeq,10s".
+    pub fn history_series(&self) -> Vec<SeriesInfo> {
+        let mut series = self.history.series();
+        for info in &mut series {
+            if let SeriesKind::Leq { id } = &info.kind {
+                if let Some(acc) = self.leqs.iter().find(|a| &a.spec().id == id) {
+                    info.label = acc.spec().display_label();
+                }
+            }
+        }
+        series
+    }
+
+    /// The last `seconds` of one series, at most `max_points` of them.
+    pub fn history_view(&self, id: &str, seconds: f64, max_points: usize) -> Vec<HistoryPoint> {
+        self.history.view(id, seconds, max_points)
+    }
+
+    /// The most recently completed point of every series.
+    ///
+    /// This is what a logger writes: one row per interval, every series at
+    /// once, taken from the same points the chart draws rather than sampled
+    /// separately — two samplings of one measurement would disagree, and the
+    /// log is the copy someone keeps.
+    pub fn history_latest(&self) -> Vec<(SeriesInfo, HistoryPoint)> {
+        self.history
+            .series()
+            .into_iter()
+            .filter_map(|info| self.history.last(&info.id).map(|p| (info, p)))
+            .collect()
+    }
+
+    pub fn history_config(&self) -> HistoryConfig {
+        self.history.config()
+    }
+
+    /// Seconds of history recorded since the last reset.
+    pub fn history_elapsed(&self) -> f64 {
+        self.history.elapsed()
     }
 
     pub fn reset_peak_hold(&mut self) {
@@ -514,6 +648,105 @@ mod tests {
             }
         }
         v
+    }
+
+    /// The history must describe the same measurement the readout does. This is
+    /// the failure that would be invisible: the values are pushed positionally,
+    /// so a series list that drifted out of step with the push order would put
+    /// every trace under its neighbour's name and still look plausible.
+    #[test]
+    fn the_history_agrees_with_the_live_readout() {
+        let mut e = engine(vec![]);
+        let mut cfg = e.config().clone();
+        cfg.history.interval_seconds = 0.5;
+        e.reconfigure(cfg, RATE);
+
+        // Two seconds of a steady tone: four complete intervals.
+        for _ in 0..20 {
+            e.push_interleaved(&sine(1000.0, 0.1, 0.1, 1), 1);
+        }
+
+        let frame = e.frame();
+        let live = frame
+            .spl
+            .iter()
+            .find(|s| s.weighting == Weighting::A)
+            .expect("an A reading")
+            .level;
+
+        let points = e.history_view("spl:a:f", 10.0, 100);
+        assert!(points.len() >= 3, "got {} points", points.len());
+
+        let last = points.last().unwrap();
+        assert!(
+            live >= last.min - 0.5 && live <= last.max + 0.5,
+            "live LAF {live} is outside the last history point {last:?}"
+        );
+    }
+
+    /// A chart's series menu must offer "LAeq,10s", not the key "leq:leq-a".
+    #[test]
+    fn a_leq_series_is_named_after_the_leq_not_its_id() {
+        let e = engine(vec![leq(
+            "leq-a",
+            Weighting::A,
+            LeqWindow::Sliding { seconds: 10.0 },
+        )]);
+        let info = e
+            .history_series()
+            .into_iter()
+            .find(|s| s.id == "leq:leq-a")
+            .expect("the LEQ series exists");
+        assert_eq!(info.label, "LAeq,10s");
+    }
+
+    #[test]
+    fn every_weighting_and_time_weighting_is_recorded() {
+        let e = engine(vec![leq("one", Weighting::A, LeqWindow::Elapsed)]);
+        let ids: Vec<String> = e.history_series().into_iter().map(|s| s.id).collect();
+
+        // Three frequency weightings, each with three time weightings and a
+        // peak, plus the one LEQ.
+        assert_eq!(ids.len(), 3 * 4 + 1, "{ids:?}");
+        for id in ["spl:a:f", "spl:a:s", "spl:a:i", "peak:a", "leq:one"] {
+            assert!(ids.contains(&id.to_string()), "{id} missing from {ids:?}");
+        }
+    }
+
+    /// Slow responds later than Fast, so a tone that has just started reads
+    /// lower on Slow. If both traces came from one detector they would be equal,
+    /// which is exactly the bug the separate detectors exist to prevent.
+    #[test]
+    fn fast_and_slow_are_genuinely_different_traces() {
+        let mut e = engine(vec![]);
+        let mut cfg = e.config().clone();
+        cfg.history.interval_seconds = 0.1;
+        e.reconfigure(cfg, RATE);
+
+        e.push_interleaved(&sine(1000.0, 0.5, 0.2, 1), 1);
+
+        let fast = e.history_view("spl:a:f", 10.0, 100);
+        let slow = e.history_view("spl:a:s", 10.0, 100);
+        assert!(!fast.is_empty() && !slow.is_empty());
+        assert!(
+            fast.last().unwrap().mean > slow.last().unwrap().mean + 1.0,
+            "fast {:?} should lead slow {:?} on a rising tone",
+            fast.last(),
+            slow.last()
+        );
+    }
+
+    #[test]
+    fn resetting_the_measurement_clears_the_history() {
+        let mut e = engine(vec![]);
+        for _ in 0..20 {
+            e.push_interleaved(&sine(1000.0, 0.1, 0.1, 1), 1);
+        }
+        assert!(!e.history_view("spl:a:f", 10.0, 100).is_empty());
+
+        e.reset_measurement();
+        assert!(e.history_view("spl:a:f", 10.0, 100).is_empty());
+        assert_eq!(e.history_elapsed(), 0.0);
     }
 
     fn leq(id: &str, weighting: Weighting, window: LeqWindow) -> LeqSpec {

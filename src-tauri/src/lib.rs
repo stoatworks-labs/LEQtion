@@ -8,6 +8,7 @@
 //! Commands never do analysis and never block on audio. If a command here grows
 //! a loop over samples, it is in the wrong crate.
 
+mod logger;
 mod session;
 mod settings;
 
@@ -18,8 +19,10 @@ use leqtion_dsp::bands::BandPlan;
 use leqtion_dsp::calibration::{Calibration, CalibrationStatus, CalibrationTarget, STANDARD_TARGETS};
 use leqtion_dsp::engine::{EngineConfig, Frame};
 use leqtion_dsp::generator::GeneratorConfig;
+use leqtion_dsp::history::{HistoryPoint, SeriesInfo};
 use leqtion_dsp::transfer::{DelayEstimate, TransferConfig, TransferPlan};
 use serde::Serialize;
+use logger::{default_filename, LogStatus, Logger};
 use session::{Analysis, ReferenceSource, Session, SessionStatus};
 use settings::Settings;
 use tauri::{AppHandle, Manager, State};
@@ -219,6 +222,108 @@ fn set_config(state: State<'_, AppState>, config: EngineConfig) -> Result<BandPl
     }
     state.save_settings()?;
     Ok(plan)
+}
+
+
+/// Every series the history is recording, so the chart can offer them by name.
+#[tauri::command]
+fn history_series(state: State<'_, AppState>) -> Result<Vec<SeriesInfo>, String> {
+    state.with_analysis(|a| a.engine.history_series())
+}
+
+/// One series, over the last `seconds`, bucketed to at most `max_points`.
+///
+/// Bucketed in the engine rather than the browser: thinning a level trace by
+/// dropping points is how a chart quietly loses every peak it was drawn to
+/// show, and that decision belongs where the numbers are.
+#[tauri::command]
+fn history_view(
+    state: State<'_, AppState>,
+    id: String,
+    seconds: f64,
+    max_points: usize,
+) -> Result<Vec<HistoryPoint>, String> {
+    state.with_analysis(|a| a.engine.history_view(&id, seconds, max_points))
+}
+
+/// Start writing the measurement to a CSV.
+///
+/// `path` is optional; without one the log goes to a dated file in the app's own
+/// log directory, so "start logging" always works and never opens a dialog
+/// someone has to answer before the thing they wanted to capture has happened.
+#[tauri::command]
+fn start_logging(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<LogStatus, String> {
+    let started_at = now_rfc3339();
+    let path = match path {
+        Some(p) if !p.trim().is_empty() => std::path::PathBuf::from(p),
+        _ => app
+            .path()
+            .app_log_dir()
+            .map_err(|e| format!("no log directory: {e}"))?
+            .join(default_filename(&started_at)),
+    };
+
+    let (device, sample_rate) = {
+        let session = state
+            .session
+            .lock()
+            .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
+        let status = session.status();
+        (
+            status.stream.as_ref().map(|s| s.device.clone()),
+            status.stream.as_ref().map(|s| s.sample_rate as f64),
+        )
+    };
+
+    let version = env!("CARGO_PKG_VERSION").to_string();
+    let logger = state.with_analysis(|a| {
+        let series = a.engine.history_series();
+        let interval = a.engine.history_config().interval_seconds;
+        let calibrated = a.engine.frame().calibrated;
+        Logger::create(
+            path,
+            &series,
+            logger::LogMeta {
+                interval_seconds: interval,
+                calibrated,
+                device: device.as_deref(),
+                sample_rate: sample_rate.unwrap_or_else(|| a.engine.sample_rate()),
+                version: &version,
+                started_at,
+            },
+        )
+    })??;
+
+    state.with_analysis(|a| {
+        a.log = Some(logger);
+        a.log.as_ref().map(|l| l.status()).unwrap_or_default()
+    })
+}
+
+#[tauri::command]
+fn stop_logging(state: State<'_, AppState>) -> Result<LogStatus, String> {
+    state.with_analysis(|a| {
+        a.log = None;
+        LogStatus {
+            interval_seconds: a.engine.history_config().interval_seconds,
+            ..LogStatus::default()
+        }
+    })
+}
+
+#[tauri::command]
+fn logging_status(state: State<'_, AppState>) -> Result<LogStatus, String> {
+    state.with_analysis(|a| match a.log.as_ref() {
+        Some(l) => l.status(),
+        None => LogStatus {
+            interval_seconds: a.engine.history_config().interval_seconds,
+            ..LogStatus::default()
+        },
+    })
 }
 
 #[tauri::command]
@@ -564,6 +669,11 @@ pub fn run() {
             find_delay,
             set_delay_samples,
             impulse_response,
+            history_series,
+            history_view,
+            start_logging,
+            stop_logging,
+            logging_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LEQtion");

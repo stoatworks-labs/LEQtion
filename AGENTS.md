@@ -32,9 +32,11 @@ src-tauri/
   src/lib.rs                 Tauri commands. Thin — no analysis, ever.
   src/session.rs             Audio → analysis thread → frame events.
   src/settings.rs            One JSON file, written atomically.
-  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 117 tests.
+  src/logger.rs              CSV log. The only thing here that writes a file.
+  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 133 tests.
                                generator.rs  signal sources
                                transfer.rs   multi-time-window TF, coherence, delay
+                               history.rs    levels over time, per-interval buckets
   crates/leqtion-audio/      cpal capture, host/device enumeration, lock-free ring.
   crates/diag/               Vendored fleet logging/crash crate. Don't edit here.
   examples/meter.rs          Whole chain, no window. The end-to-end check.
@@ -119,6 +121,26 @@ invented out of nothing, which every reading afterwards would inherit and which
 `settings.json` would keep. The engine cannot catch this: from inside the analysis there is
 no difference between a calibrator on a capsule and a sine on a wire. Only the source
 knows, which is why the check lives in `src/lib.rs` and not in `leqtion-dsp`.
+
+### 4.4b The history and the log are the same points
+
+`leqtion-dsp::history` records every level over time, and the CSV log writes a row when
+an interval completes — from `Engine::history_latest`, not from a timer of its own. Two
+clocks sampling one measurement would disagree about the same second, and the log is the
+copy someone keeps.
+
+Three things in there are load-bearing:
+
+- **A point is an interval, not a sample.** `min`, `mean`, `max` cover the whole
+  interval; sampling instantaneously would alias, and a transient would exist only if it
+  landed on a tick. `mean` is an energy mean.
+- **Downsampling happens in `History::view`, never in the UI.** Thinning a level trace by
+  dropping points loses exactly the peaks it was drawn to show, so a view keeps the min of
+  the mins and the max of the maxes. Zooming out may lose time resolution; it must never
+  lose level.
+- **Every log row carries `calibrated` and `dropped_frames`.** A calibration can change
+  mid-log, and a gap in the audio means the period is short by an unknown amount. Both
+  have to be in the file, not just on screen.
 
 ### 4.5 The audio callback does not allocate, lock or block
 
