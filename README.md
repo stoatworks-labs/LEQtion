@@ -16,6 +16,12 @@ time-weighted SPL, as many user-defined LEQs as you want, a signal generator, an
 transfer function measurement with phase and coherence — arranged on a grid of tiles you
 lay out yourself.
 
+[![Watch LEQtion running — 45 seconds](docs/video-thumb.png)](https://www.youtube.com/watch?v=Qe8D6juRCU4)
+
+*A 45-second tour. Every frame is the real application, recorded on screen and driven
+over macOS accessibility — and what it is measuring throughout is its own signal
+generator, so there is no hardware anywhere in the chain.*
+
 ![LEQtion measuring pink noise from its own generator](docs/screenshots/measuring-pink-noise.png)
 
 *Measuring its own signal generator — pink noise at −20 dBFS, taken through the `Signal
