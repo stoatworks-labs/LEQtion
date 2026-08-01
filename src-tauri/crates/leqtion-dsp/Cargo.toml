@@ -1,0 +1,12 @@
+[package]
+name = "leqtion-dsp"
+description = "Sound level and spectrum analysis: fractional-octave bands, IEC 61672 weighting, time-weighted SPL and LEQ"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# No I/O, no threads, no audio backend. Everything in here is a pure function of
+# the samples it is handed, which is what makes it testable without a sound card.
+[dependencies]
+realfft = "3"
+serde = { version = "1", features = ["derive"] }

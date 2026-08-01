@@ -1,0 +1,20 @@
+[package]
+name = "leqtion-audio"
+description = "Audio capture for LEQtion: host and device enumeration, and a real-time-safe path from the driver callback to the analysis thread"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+cpal = "0.18"
+# Lock-free SPSC ring. The audio callback must not allocate, block or take a
+# lock, so it cannot touch the engine directly — it pushes here instead.
+rtrb = "0.3"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tracing = "0.1"
+
+[features]
+# Windows ASIO. Off by default because it cannot be built without the Steinberg
+# SDK, which is not redistributable — see docs/asio.md.
+asio = ["cpal/asio"]

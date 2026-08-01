@@ -1,0 +1,34 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+dist-lite
+
+# Rust / Tauri
+#
+# `target/` unanchored, not `src-tauri/target/`: each crate under
+# src-tauri/crates/ builds into its own target/ when it is built standalone
+# (cargo test -p, or before the workspace existed), and an anchored rule misses
+# every one of them. That is 140 MB of object files into the first commit.
+target/
+src-tauri/gen/schemas/

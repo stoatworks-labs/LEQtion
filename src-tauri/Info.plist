@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Merged into the bundle's Info.plist by tauri-bundler.
+
+  NSMicrophoneUsageDescription is not optional: macOS kills the process outright
+  when it opens an input device without one, and the crash is attributed to the
+  audio driver rather than to the missing key, which sends you looking in
+  entirely the wrong place. The string is shown verbatim in the permission
+  prompt, so it says what LEQtion does with the audio — which is nothing except
+  measure it.
+-->
+<plist version="1.0">
+  <dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>LEQtion measures the sound level and spectrum of an audio input. Audio is analysed on this machine and is never recorded, saved or sent anywhere.</string>
+  </dict>
+</plist>
