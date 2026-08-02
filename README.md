@@ -206,6 +206,24 @@ and the two run on **separate clocks**. The internal reference then drifts and t
 to be found again every few minutes. The app says so when it happens. An interface whose
 input and output are one device — any Dante card, any USB interface — has no such problem.
 
+## Download
+
+<!-- downloads:start -->
+<!-- downloads:end -->
+
+macOS only for now, on both architectures. That is about the *builds*, not the
+code: Tauri cannot cross-bundle, so a Windows installer has to be made on
+Windows and a Linux AppImage on Linux — and the only Windows machine here is
+ARM64, which would produce an arm64-only installer rather than the x86_64 one a
+Windows user with an audio interface actually needs.
+
+The apps are **ad-hoc signed and not notarised**, so macOS refuses them on first
+open. Right-click the app and choose Open, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/LEQtion.app
+```
+
 ## Build and run
 
 ```bash
