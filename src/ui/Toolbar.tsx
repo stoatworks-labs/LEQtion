@@ -48,6 +48,13 @@ export function Toolbar() {
         </button>
         <span className="spacer" />
         <ResetButtons />
+        {/* Opens the shared About dialog — see public/about.js, which delegates
+            this attribute from the document, so nothing needs importing here.
+            One dialog for the Tauri window and the browser build alike: a Tauri
+            webview is a web page, and its links open in the system browser. */}
+        <button type="button" data-stoatworks-about>
+          About
+        </button>
       </div>
 
       {panel === 'analysis' && (
