@@ -32,3 +32,7 @@ dist-lite
 # every one of them. That is 140 MB of object files into the first commit.
 target/
 src-tauri/gen/schemas/
+
+# Release artefacts. Built by scripts/release-local.sh and attached to the
+# GitHub release; they do not belong in the history.
+dist-release/
