@@ -209,6 +209,25 @@ input and output are one device — any Dante card, any USB interface — has no
 ## Download
 
 <!-- downloads:start -->
+
+## Download
+
+**[v0.1.0](https://github.com/stoatworks-labs/LEQtion/releases/tag/v0.1.0)** — prebuilt for macOS. Pick your platform:
+
+<details>
+<summary><b>macOS</b> — Apple Silicon, Intel</summary>
+
+| Build | Download | Size |
+| --- | --- | --- |
+| Apple Silicon · .dmg disk image | [`leqtion-0.1.0-macos-aarch64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.0/leqtion-0.1.0-macos-aarch64.dmg) | 3.8 MB |
+| Intel · .dmg disk image | [`leqtion-0.1.0-macos-x86_64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.0/leqtion-0.1.0-macos-x86_64.dmg) | 4.1 MB |
+| Apple Silicon · .zip archive | [`leqtion-0.1.0-macos-aarch64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.0/leqtion-0.1.0-macos-aarch64.zip) | 3.7 MB |
+| Intel · .zip archive | [`leqtion-0.1.0-macos-x86_64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.0/leqtion-0.1.0-macos-x86_64.zip) | 4.2 MB |
+
+</details>
+
+All builds, checksums and release notes: [github.com/stoatworks-labs/LEQtion/releases](https://github.com/stoatworks-labs/LEQtion/releases).
+
 <!-- downloads:end -->
 
 macOS only for now, on both architectures. That is about the *builds*, not the
