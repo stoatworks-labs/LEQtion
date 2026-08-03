@@ -1,6 +1,6 @@
 [package]
 name = "leqtion"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sound level meter and real-time analyser: RTA, spectrograph, SPL and user-defined LEQ"
 authors = ["Allan Sargeant"]
 edition = "2021"
