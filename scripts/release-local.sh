@@ -104,9 +104,10 @@ build_mac() { # build_mac <label> <rust-target>
     return 0
   fi
 
-  # Ad-hoc signed, not notarised. Without this every nested helper is unsigned
-  # and Gatekeeper kills them *silently* after the user has already approved the
-  # app itself — see the fleet note on nested binaries.
+  # Developer ID-signs and notarises when this Mac is configured for it,
+  # ad-hoc otherwise. Must happen before the app is copied anywhere: the
+  # notarisation ticket is stapled into the bundle, and only copies made
+  # afterwards carry it.
   rl_adhoc_sign "$app"
 
   local stage="$out/.stage-$label"
@@ -117,8 +118,23 @@ build_mac() { # build_mac <label> <rust-target>
   rm -rf "$stage"
 
   if [[ -n "$dmg" ]]; then
-    cp "$dmg" "$out/${SLUG}-${version}-${label}.dmg"
-    rl_note "$(basename "$out/${SLUG}-${version}-${label}.dmg")"
+    local out_dmg="$out/${SLUG}-${version}-${label}.dmg"
+    cp "$dmg" "$out_dmg"
+    # Tauri built this image from the app BEFORE it was notarised, so the image
+    # carries neither its own ticket nor the app's staple. Gatekeeper checks the
+    # .dmg the user downloaded first, so shipping it un-notarised reinstates the
+    # very warning this whole exercise removes — v0.1.1 went out that way.
+    # Rebuild it from the stapled app, then notarise and staple the image.
+    if rl_mac_sign_ready; then
+      local dstage="$out/.dmgstage-$label"
+      rm -rf "$dstage"; mkdir -p "$dstage"
+      cp -R "$app" "$dstage/"
+      rm -f "$out_dmg"
+      rl_dmg "$label" "$dstage" --app "$NAME.app"
+      rm -rf "$dstage"
+      rl_mac_notarize "$out_dmg" || return 1
+    fi
+    rl_note "$(basename "$out_dmg")"
   else
     rl_skip "$label dmg (bundler produced none)"
   fi
