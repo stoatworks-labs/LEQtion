@@ -268,6 +268,10 @@ reference meter, a calibrator or a loudspeaker. [`docs/field-test.md`](docs/fiel
 is the checklist for doing that, in the order the steps depend on each other — an
 electrical loopback before anything acoustic, and calibration before either.
 
+<!-- attributions:start -->
+This project is built on other people's work — see [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
+<!-- attributions:end -->
+
 ## Licence
 
 MIT.
