@@ -236,12 +236,8 @@ Windows and a Linux AppImage on Linux — and the only Windows machine here is
 ARM64, which would produce an arm64-only installer rather than the x86_64 one a
 Windows user with an audio interface actually needs.
 
-The apps are **ad-hoc signed and not notarised**, so macOS refuses them on first
-open. Right-click the app and choose Open, or clear the quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/LEQtion.app
-```
+The apps are **Developer ID-signed and notarised by Apple**, so they open
+normally — no Gatekeeper warning and no quarantine step.
 
 ## Build and run
 
