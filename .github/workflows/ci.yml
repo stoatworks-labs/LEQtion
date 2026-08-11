@@ -1,0 +1,77 @@
+name: ci
+
+# Until this existed the repo had no workflows at all, so no pull request ever
+# got a status check: Dependabot bumps arrived with nothing to gate a merge on
+# and accumulated. The open bumps span both halves of the app — oxlint and
+# @types/node on the web side, `time` under /src-tauri — so both are checked.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Deliberately a plain `npm ci` — no --legacy-peer-deps. A bump that only
+      # installs by ignoring the peer graph is exactly what this is here to catch.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  tauri:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      # The tauri crate links against webkit2gtk on Linux, so even `cargo check`
+      # needs the development headers — without them the build fails in
+      # pkg-config, long before any of this repo's own code is compiled.
+      # libasound2-dev is for leqtion-audio, which is a real audio capture path.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev \
+            librsvg2-dev patchelf libgtk-3-dev libasound2-dev
+
+      # `cargo fmt --check` is deliberately not a step: it is already failing on
+      # main, and gating every bump on pre-existing formatting drift would block
+      # the PRs this workflow exists to unblock. Run `cargo fmt --all` in
+      # src-tauri once, then add it.
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+
+      - name: test
+        run: cargo test
+        working-directory: src-tauri
