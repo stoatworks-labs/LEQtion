@@ -353,6 +353,57 @@ export interface Settings {
   generator: GeneratorConfig;
   generatorChannel: number;
   reference: ReferenceSource;
+  lastProject: string | null;
+  lastShow: string | null;
+}
+
+/**
+ * `leqtion::project::ProjectSummary`
+ *
+ * `dir` is the handle — every project command takes it. It is the directory name
+ * under the projects root, which is also the display name, so renaming a project
+ * moves its folder.
+ */
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  dir: string;
+  created: string;
+  modified: string;
+  notes: string;
+  showCount: number;
+}
+
+/**
+ * `leqtion::project::ShowSummary` — a show without its configuration.
+ *
+ * The configuration is deliberately not sent to the frontend. A show is applied by
+ * the backend (`load_show`), which pushes the engine, transfer and generator settings
+ * into the running session and hands back the result; the UI never holds a show's
+ * config and so cannot apply half of one.
+ */
+export interface ShowSummary {
+  id: string;
+  name: string;
+  created: string;
+  modified: string;
+  notes: string;
+  device: string | null;
+}
+
+/** `leqtion::OpenProject` */
+export interface OpenProject {
+  project: ProjectSummary;
+  shows: ShowSummary[];
+}
+
+/** `leqtion::ShowApplied` — the whole window's new state, from one call. */
+export interface ShowApplied {
+  show: ShowSummary;
+  settings: Settings;
+  plan: BandPlan;
+  transferPlan: TransferPlan;
+  status: SessionStatus;
 }
 
 /** `leqtion::Startup` */
@@ -366,6 +417,10 @@ export interface Startup {
   outputs: DeviceInfo[];
   calibrationTargets: CalibrationTarget[];
   version: string;
+  projects: ProjectSummary[];
+  project: ProjectSummary | null;
+  shows: ShowSummary[];
+  projectsRoot: string;
 }
 
 export const WEIGHTING_LABEL: Record<Weighting, string> = { a: 'A', c: 'C', z: 'Z' };

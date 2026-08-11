@@ -154,6 +154,7 @@ input[type='number'] {
 /* ---------- device bar ---------- */
 
 .devicebar,
+.projectbar,
 .toolbar-row {
   display: flex;
   align-items: flex-end;
@@ -163,6 +164,40 @@ input[type='number'] {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 8px 10px;
+}
+
+/* ---------- project bar ---------- */
+
+/* The panels this bar opens (new project, save as, manage, and the
+   discard-changes confirmation) sit *inside* the bar and must take a full row of
+   their own rather than squeezing in beside the controls. */
+.projectbar > .panel,
+.projectbar > .bar-note {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+.projectbar .panel.confirm {
+  align-items: center;
+  border-color: var(--warn);
+}
+
+.projectbar .panel.manage {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.projectbar .panel.manage .leq-table {
+  width: 100%;
+}
+
+.bar-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Deletions report a path, and a path that is cut off is no use to anyone
+     trying to go and find the file. */
+  word-break: break-all;
 }
 
 .chip {

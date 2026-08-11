@@ -23,8 +23,10 @@ import {
   type HostInfo,
   type LeqSpec,
   type GeneratorConfig,
+  type ProjectSummary,
   type ReferenceSource,
   type SessionStatus,
+  type ShowSummary,
   type TransferConfig,
   type TransferPlan,
   DEFAULT_GENERATOR,
@@ -157,6 +159,21 @@ interface Store {
   /** Tile whose settings panel is open, if any. */
   editing: string | null;
 
+  projects: ProjectSummary[];
+  projectsRoot: string;
+  /** The open project, or null. Measuring never requires one. */
+  project: ProjectSummary | null;
+  shows: ShowSummary[];
+  activeShow: ShowSummary | null;
+  /**
+   * Whether anything has changed since the active show was loaded or saved.
+   *
+   * Deliberately coarse — it is set by any configuration or layout change and
+   * cleared by a save or a load. It answers "is there something to save?", which is
+   * the only question the UI asks, and it errs towards saying yes.
+   */
+  showChanged: boolean;
+
   init: () => Promise<void>;
   setError: (e: string | null) => void;
   refreshDevices: (host?: string | null) => Promise<void>;
@@ -186,6 +203,19 @@ interface Store {
   setTileOptions: (id: string, options: Record<string, unknown>) => void;
   setEditing: (id: string | null) => void;
   resetLayout: () => void;
+
+  refreshProjects: () => Promise<void>;
+  createProject: (name: string) => Promise<void>;
+  openProject: (dir: string) => Promise<void>;
+  closeProject: () => Promise<void>;
+  renameProject: (name: string) => Promise<void>;
+  deleteProject: (dir: string) => Promise<string | null>;
+
+  saveShowAs: (name: string) => Promise<void>;
+  updateActiveShow: () => Promise<void>;
+  loadShow: (id: string) => Promise<void>;
+  renameShow: (id: string, name: string) => Promise<void>;
+  deleteShow: (id: string) => Promise<string | null>;
 }
 
 /**
@@ -246,6 +276,13 @@ export const useStore = create<Store>((set, get) => ({
   layout: defaultLayout(),
   editing: null,
 
+  projects: [],
+  projectsRoot: '',
+  project: null,
+  shows: [],
+  activeShow: null,
+  showChanged: false,
+
   async init() {
     try {
       const s = await api.startup();
@@ -275,6 +312,13 @@ export const useStore = create<Store>((set, get) => ({
         selectedRate: s.settings.sampleRate,
         config,
         layout,
+        projects: s.projects,
+        projectsRoot: s.projectsRoot,
+        project: s.project,
+        shows: s.shows,
+        activeShow: s.shows.find((sh) => sh.id === s.settings.lastShow) ?? null,
+        // Nothing has been touched yet, whatever was restored.
+        showChanged: false,
       });
 
       if (config.leqs !== s.settings.engine.leqs) {
@@ -298,12 +342,12 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async selectHost(host) {
-    set({ selectedHost: host, selectedDevice: null });
+    set({ selectedHost: host, selectedDevice: null, showChanged: true });
     await get().refreshDevices(host);
   },
 
-  selectDevice: (selectedDevice) => set({ selectedDevice }),
-  selectRate: (selectedRate) => set({ selectedRate }),
+  selectDevice: (selectedDevice) => set({ selectedDevice, showChanged: true }),
+  selectRate: (selectedRate) => set({ selectedRate, showChanged: true }),
 
   async start() {
     const { selectedHost, selectedDevice, selectedRate } = get();
@@ -334,7 +378,7 @@ export const useStore = create<Store>((set, get) => ({
 
   async setConfig(update) {
     const config = update(get().config);
-    set({ config });
+    set({ config, showChanged: true });
     try {
       const plan = await api.setConfig(config);
       set({ plan, error: null });
@@ -370,7 +414,7 @@ export const useStore = create<Store>((set, get) => ({
 
   async setGenerator(update) {
     const generator = update(get().generator);
-    set({ generator });
+    set({ generator, showChanged: true });
     try {
       await api.setGenerator(generator, get().generatorChannel);
     } catch (e) {
@@ -379,7 +423,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async setGeneratorChannel(generatorChannel) {
-    set({ generatorChannel });
+    set({ generatorChannel, showChanged: true });
     try {
       await api.setGenerator(get().generator, generatorChannel);
     } catch (e) {
@@ -389,7 +433,7 @@ export const useStore = create<Store>((set, get) => ({
 
   async setReference(reference) {
     try {
-      set({ status: await api.setReference(reference) });
+      set({ status: await api.setReference(reference), showChanged: true });
     } catch (e) {
       set({ error: errorText(e) });
     }
@@ -397,7 +441,7 @@ export const useStore = create<Store>((set, get) => ({
 
   async setTransfer(update) {
     const transfer = update(get().transfer);
-    set({ transfer });
+    set({ transfer, showChanged: true });
     try {
       set({ transferPlan: await api.setTransferConfig(transfer) });
     } catch (e) {
@@ -447,14 +491,14 @@ export const useStore = create<Store>((set, get) => ({
       options: {},
     };
     const next = { ...layout, tiles: [...layout.tiles, tile] };
-    set({ layout: next, editing: tile.id });
+    set({ layout: next, editing: tile.id, showChanged: true });
     scheduleSave(next);
   },
 
   removeTile(id) {
     const layout = get().layout;
     const next = { ...layout, tiles: layout.tiles.filter((t) => t.id !== id) };
-    set({ layout: next, editing: get().editing === id ? null : get().editing });
+    set({ layout: next, editing: get().editing === id ? null : get().editing, showChanged: true });
     scheduleSave(next);
   },
 
@@ -468,7 +512,7 @@ export const useStore = create<Store>((set, get) => ({
           : t,
       ),
     };
-    set({ layout: next });
+    set({ layout: next, showChanged: true });
     scheduleSave(next);
   },
 
@@ -486,7 +530,7 @@ export const useStore = create<Store>((set, get) => ({
         };
       }),
     };
-    set({ layout: next });
+    set({ layout: next, showChanged: true });
     scheduleSave(next);
   },
 
@@ -496,7 +540,7 @@ export const useStore = create<Store>((set, get) => ({
       ...layout,
       tiles: layout.tiles.map((t) => (t.id === id ? { ...t, options: { ...t.options, ...options } } : t)),
     };
-    set({ layout: next });
+    set({ layout: next, showChanged: true });
     scheduleSave(next);
   },
 
@@ -504,7 +548,194 @@ export const useStore = create<Store>((set, get) => ({
 
   resetLayout() {
     const next = defaultLayout();
-    set({ layout: next, editing: null });
+    set({ layout: next, editing: null, showChanged: true });
     scheduleSave(next);
+  },
+
+  // -- projects and shows ---------------------------------------------------
+  //
+  // A show is applied by Rust, not here: `loadShow` sends an id and gets the whole
+  // new state back. The frontend never holds a show's configuration, so it cannot
+  // apply half of one and leave the engine and the tiles disagreeing about what is
+  // being measured.
+
+  async refreshProjects() {
+    try {
+      set({ projects: await api.listProjects() });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async createProject(name) {
+    try {
+      const project = await api.createProject(name);
+      set({ project, shows: [], activeShow: null, error: null });
+      await get().refreshProjects();
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async openProject(dir) {
+    try {
+      const { project, shows } = await api.openProject(dir);
+      // Opening a project does not load a show, so whatever is being measured
+      // carries on untouched and there is no active show until one is chosen.
+      set({ project, shows, activeShow: null, error: null });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async closeProject() {
+    try {
+      await api.closeProject();
+      set({ project: null, shows: [], activeShow: null, error: null });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async renameProject(name) {
+    const project = get().project;
+    if (!project) return;
+    try {
+      const renamed = await api.renameProject(project.dir, name);
+      set({ project: renamed, error: null });
+      await get().refreshProjects();
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  /** Returns where the project was moved to, for the UI to report. */
+  async deleteProject(dir) {
+    try {
+      const movedTo = await api.deleteProject(dir);
+      if (get().project?.dir === dir) {
+        set({ project: null, shows: [], activeShow: null });
+      }
+      set({ error: null });
+      await get().refreshProjects();
+      return movedTo;
+    } catch (e) {
+      set({ error: errorText(e) });
+      return null;
+    }
+  },
+
+  async saveShowAs(name) {
+    const project = get().project;
+    if (!project) {
+      set({ error: 'Open or create a project before saving a show.' });
+      return;
+    }
+    try {
+      const show = await api.saveShow(project.dir, name);
+      set({
+        shows: await api.listShows(project.dir),
+        activeShow: show,
+        showChanged: false,
+        error: null,
+      });
+      await get().refreshProjects();
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async updateActiveShow() {
+    const { project, activeShow } = get();
+    if (!project || !activeShow) return;
+    try {
+      const show = await api.updateShow(project.dir, activeShow.id);
+      set({
+        shows: await api.listShows(project.dir),
+        activeShow: show,
+        showChanged: false,
+        error: null,
+      });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async loadShow(id) {
+    const project = get().project;
+    if (!project) return;
+    try {
+      const applied = await api.loadShow(project.dir, id);
+      const layout = isLayout(applied.settings.layout)
+        ? applied.settings.layout
+        : defaultLayout();
+
+      set({
+        activeShow: applied.show,
+        config: {
+          ...applied.settings.engine,
+          leqs: applied.settings.engine.leqs?.length
+            ? applied.settings.engine.leqs
+            : defaultLeqs(),
+        },
+        transfer: applied.settings.transfer ?? DEFAULT_TRANSFER,
+        // The generator comes back silent whatever the show was saved with — the
+        // backend forces it, and the level is what is actually restored. Loading a
+        // show is not a reason to put a signal into a PA.
+        generator: applied.settings.generator ?? DEFAULT_GENERATOR,
+        generatorChannel: applied.settings.generatorChannel ?? 0,
+        selectedHost: applied.settings.host,
+        selectedDevice: applied.settings.device,
+        selectedRate: applied.settings.sampleRate,
+        plan: applied.plan,
+        transferPlan: applied.transferPlan,
+        status: applied.status,
+        // Not scheduled for saving: Rust has already written this layout as part
+        // of applying the show, and echoing it back would be a redundant write.
+        layout,
+        editing: null,
+        showChanged: false,
+        error: null,
+      });
+      // The device may differ from the one that is open, so the calibration shown
+      // has to be re-read rather than assumed — it belongs to the hardware, not to
+      // the show. See docs/tuning.md §1.1.
+      await get().refreshCalibration();
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async renameShow(id, name) {
+    const project = get().project;
+    if (!project) return;
+    try {
+      const show = await api.renameShow(project.dir, id, name);
+      set({
+        shows: await api.listShows(project.dir),
+        activeShow: get().activeShow?.id === id ? show : get().activeShow,
+        error: null,
+      });
+    } catch (e) {
+      set({ error: errorText(e) });
+    }
+  },
+
+  async deleteShow(id) {
+    const project = get().project;
+    if (!project) return null;
+    try {
+      const movedTo = await api.deleteShow(project.dir, id);
+      set({
+        shows: await api.listShows(project.dir),
+        activeShow: get().activeShow?.id === id ? null : get().activeShow,
+        error: null,
+      });
+      await get().refreshProjects();
+      return movedTo;
+    } catch (e) {
+      set({ error: errorText(e) });
+      return null;
+    }
   },
 }));

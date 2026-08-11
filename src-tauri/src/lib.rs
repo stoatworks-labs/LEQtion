@@ -9,6 +9,7 @@
 //! a loop over samples, it is in the wrong crate.
 
 mod logger;
+mod project;
 mod session;
 mod settings;
 
@@ -23,6 +24,7 @@ use leqtion_dsp::history::{HistoryPoint, SeriesInfo};
 use leqtion_dsp::transfer::{DelayEstimate, TransferConfig, TransferPlan};
 use serde::Serialize;
 use logger::{default_filename, LogStatus, Logger};
+use project::{ProjectStore, ProjectSummary, Show, ShowSummary};
 use session::{Analysis, ReferenceSource, Session, SessionStatus};
 use settings::Settings;
 use tauri::{AppHandle, Manager, State};
@@ -31,6 +33,7 @@ struct AppState {
     session: Mutex<Session>,
     settings: Mutex<Settings>,
     settings_path: std::path::PathBuf,
+    projects: ProjectStore,
 }
 
 impl AppState {
@@ -82,6 +85,13 @@ struct Startup {
     outputs: Vec<DeviceInfo>,
     calibration_targets: Vec<CalibrationTarget>,
     version: String,
+    /// Every project under the projects root, and the one that was open last if it
+    /// is still there. A project that has since been moved or deleted resolves to
+    /// `None` and the app opens without one, which is a normal state.
+    projects: Vec<ProjectSummary>,
+    project: Option<ProjectSummary>,
+    shows: Vec<ShowSummary>,
+    projects_root: String,
 }
 
 #[tauri::command]
@@ -106,6 +116,18 @@ fn startup(state: State<'_, AppState>) -> Result<Startup, String> {
     })?;
     let outputs = leqtion_audio::output_devices(settings.host.as_deref()).unwrap_or_default();
 
+    // A missing or unreadable project is not an error at startup. The pointer in
+    // settings is a convenience, and a folder that has been moved since must not stop
+    // the app opening — `docs/tuning.md` §1.3.
+    let project = settings
+        .last_project
+        .as_deref()
+        .and_then(|dir| state.projects.summary(dir).ok());
+    let shows = project
+        .as_ref()
+        .and_then(|p| state.projects.shows(&p.dir).ok())
+        .unwrap_or_default();
+
     Ok(Startup {
         settings,
         hosts,
@@ -116,6 +138,10 @@ fn startup(state: State<'_, AppState>) -> Result<Startup, String> {
         outputs,
         calibration_targets: STANDARD_TARGETS.to_vec(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        projects: state.projects.list(),
+        project,
+        shows,
+        projects_root: state.projects.root().to_string_lossy().into_owned(),
     })
 }
 
@@ -603,6 +629,273 @@ fn impulse_response(state: State<'_, AppState>, max_points: usize) -> Result<Vec
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// Projects and shows
+//
+// A project is a folder grouping shows; a show is a complete configuration. See
+// `project.rs` and `docs/tuning.md` §1.
+//
+// Nothing here is required to measure. The app opens, meters and logs with no
+// project at all — these commands exist for people who want to keep the work.
+// ---------------------------------------------------------------------------
+
+impl AppState {
+    fn settings_snapshot(&self) -> Result<Settings, String> {
+        Ok(self
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?
+            .clone())
+    }
+
+    /// Remember where the user is, so the next launch comes back to it.
+    fn remember_place(&self, project: Option<&str>, show: Option<&str>) -> Result<(), String> {
+        {
+            let mut settings = self
+                .settings
+                .lock()
+                .map_err(|_| "settings lock is poisoned")?;
+            settings.last_project = project.map(str::to_string);
+            settings.last_show = show.map(str::to_string);
+        }
+        self.save_settings()
+    }
+}
+
+#[tauri::command]
+fn list_projects(state: State<'_, AppState>) -> Vec<ProjectSummary> {
+    state.projects.list()
+}
+
+#[tauri::command]
+fn create_project(state: State<'_, AppState>, name: String) -> Result<ProjectSummary, String> {
+    let project = state.projects.create(&name)?;
+    state.remember_place(Some(&project.dir), None)?;
+    state.projects.summary(&project.dir)
+}
+
+/// Open a project: its metadata and the shows inside it. Does **not** load a show —
+/// opening a project must not change what is being measured.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenProject {
+    project: ProjectSummary,
+    shows: Vec<ShowSummary>,
+}
+
+#[tauri::command]
+fn open_project(state: State<'_, AppState>, dir: String) -> Result<OpenProject, String> {
+    let project = state.projects.summary(&dir)?;
+    let shows = state.projects.shows(&dir)?;
+    state.remember_place(Some(&project.dir), None)?;
+    Ok(OpenProject { project, shows })
+}
+
+#[tauri::command]
+fn close_project(state: State<'_, AppState>) -> Result<(), String> {
+    state.remember_place(None, None)
+}
+
+#[tauri::command]
+fn rename_project(
+    state: State<'_, AppState>,
+    dir: String,
+    name: String,
+) -> Result<ProjectSummary, String> {
+    let project = state.projects.rename(&dir, &name)?;
+    let was_open = state
+        .settings
+        .lock()
+        .map_err(|_| "settings lock is poisoned")?
+        .last_project
+        .as_deref()
+        == Some(dir.as_str());
+    if was_open {
+        // The directory moved, so a stored pointer to the old one is now dangling.
+        let show = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?
+            .last_show
+            .clone();
+        state.remember_place(Some(&project.dir), show.as_deref())?;
+    }
+    state.projects.summary(&project.dir)
+}
+
+/// Move a project to the projects root's `.deleted/` folder and return where it went.
+///
+/// Deliberately not an unlink — see `ProjectStore::delete`. The returned path is shown
+/// to the user, because "deleted" that actually means "moved" has to say so.
+#[tauri::command]
+fn delete_project(state: State<'_, AppState>, dir: String) -> Result<String, String> {
+    let moved = state.projects.delete(&dir)?;
+    let open = state
+        .settings
+        .lock()
+        .map_err(|_| "settings lock is poisoned")?
+        .last_project
+        .clone();
+    if open.as_deref() == Some(dir.as_str()) {
+        state.remember_place(None, None)?;
+    }
+    Ok(moved.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn list_shows(state: State<'_, AppState>, dir: String) -> Result<Vec<ShowSummary>, String> {
+    state.projects.shows(&dir)
+}
+
+/// Save the current configuration as a new show.
+#[tauri::command]
+fn save_show(
+    state: State<'_, AppState>,
+    dir: String,
+    name: String,
+) -> Result<ShowSummary, String> {
+    if name.trim().is_empty() {
+        return Err("a show needs a name".into());
+    }
+    let settings = state.settings_snapshot()?;
+    let calibration = state.with_analysis(|a| a.engine.calibration().cloned())?;
+    let show = Show::capture(&name, &settings, calibration);
+    state.projects.save_show(&dir, &show)?;
+    state.remember_place(Some(&dir), Some(&show.id))?;
+    Ok(ShowSummary::from(&show))
+}
+
+/// Overwrite an existing show with the current configuration, keeping its name and id.
+#[tauri::command]
+fn update_show(state: State<'_, AppState>, dir: String, id: String) -> Result<ShowSummary, String> {
+    let mut show = state.projects.load_show(&dir, &id)?;
+    let settings = state.settings_snapshot()?;
+    let calibration = state.with_analysis(|a| a.engine.calibration().cloned())?;
+    show.update_from(&settings, calibration);
+    state.projects.save_show(&dir, &show)?;
+    state.remember_place(Some(&dir), Some(&show.id))?;
+    Ok(ShowSummary::from(&show))
+}
+
+#[tauri::command]
+fn rename_show(
+    state: State<'_, AppState>,
+    dir: String,
+    id: String,
+    name: String,
+    notes: Option<String>,
+) -> Result<ShowSummary, String> {
+    if name.trim().is_empty() {
+        return Err("a show needs a name".into());
+    }
+    let mut show = state.projects.load_show(&dir, &id)?;
+    show.name = name.trim().to_string();
+    if let Some(notes) = notes {
+        show.notes = notes;
+    }
+    show.modified = now_rfc3339();
+    state.projects.save_show(&dir, &show)?;
+    Ok(ShowSummary::from(&show))
+}
+
+#[tauri::command]
+fn delete_show(state: State<'_, AppState>, dir: String, id: String) -> Result<String, String> {
+    let moved = state.projects.delete_show(&dir, &id)?;
+    let open = state
+        .settings
+        .lock()
+        .map_err(|_| "settings lock is poisoned")?
+        .last_show
+        .clone();
+    if open.as_deref() == Some(id.as_str()) {
+        state.remember_place(Some(&dir), None)?;
+    }
+    Ok(moved.to_string_lossy().into_owned())
+}
+
+/// Everything the UI needs after a show is applied, in one call — same reasoning as
+/// `startup`: the whole window changes at once, so it should change from one answer.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShowApplied {
+    show: ShowSummary,
+    settings: Settings,
+    plan: BandPlan,
+    transfer_plan: TransferPlan,
+    status: SessionStatus,
+}
+
+/// Load a show and apply it.
+///
+/// Applies the engine, transfer, generator and reference configuration and hands the
+/// layout back for the frontend to render. Two things it deliberately does **not** do:
+///
+/// - **It does not open the audio device.** The show remembers which input it used and
+///   that is offered as the selection, but a show that loads is not a show that starts
+///   measuring. Someone loading a show to look at its settings has not asked to open a
+///   stream, and on a shared interface that is not a free action.
+/// - **It does not touch the calibration.** The engine keeps whatever belongs to the
+///   device that is actually open. See `docs/tuning.md` §1.1 — the show's snapshot
+///   describes what it *was* measured with, and `Show::restore` cannot return it.
+#[tauri::command]
+fn load_show(state: State<'_, AppState>, dir: String, id: String) -> Result<ShowApplied, String> {
+    let show = state.projects.load_show(&dir, &id)?;
+    let restore = show.restore();
+
+    let (plan, transfer_plan) = state.with_analysis(|a| {
+        let rate = a.engine.sample_rate();
+        a.engine.reconfigure(restore.engine.clone(), rate);
+        let tf_rate = a.transfer.sample_rate();
+        a.transfer.reconfigure(restore.transfer, tf_rate);
+        (a.engine.plan().clone(), a.transfer.plan().clone())
+    })?;
+
+    {
+        let mut session = state
+            .session
+            .lock()
+            .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
+        // `restore.generator` is guaranteed silent — `Show::restore` forces the signal
+        // Off. Sending it here is what makes a loaded show stop a generator that was
+        // already running, rather than leaving the previous show's noise in the PA.
+        session.set_generator(restore.generator, restore.generator_channel);
+        session.set_reference(restore.reference)?;
+    }
+
+    {
+        let mut settings = state
+            .settings
+            .lock()
+            .map_err(|_| "settings lock is poisoned")?;
+        settings.engine = restore.engine;
+        settings.transfer = restore.transfer;
+        settings.generator = restore.generator;
+        settings.generator_channel = restore.generator_channel;
+        settings.reference = restore.reference;
+        settings.host = restore.host;
+        settings.device = restore.device;
+        settings.sample_rate = restore.sample_rate;
+        settings.layout = restore.layout;
+        settings.last_project = Some(dir.clone());
+        settings.last_show = Some(show.id.clone());
+    }
+    state.save_settings()?;
+
+    let status = state
+        .session
+        .lock()
+        .map_err(|_| "the session lock is poisoned; restart LEQtion")?
+        .status();
+
+    Ok(ShowApplied {
+        show: ShowSummary::from(&show),
+        settings: state.settings_snapshot()?,
+        plan,
+        transfer_plan,
+        status,
+    })
+}
+
 fn now_rfc3339() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -634,10 +927,23 @@ pub fn run() {
                 Err(e) => eprintln!("logging is unavailable: {e}"),
             }
 
+            // Projects live in the user's documents, not in the app's config
+            // directory: they are work someone will want to find, back up and hand
+            // to a colleague, and a folder buried in Application Support is none of
+            // those things. The app data directory is the fallback for a platform
+            // that will not give us Documents.
+            let projects_root = app
+                .path()
+                .document_dir()
+                .or_else(|_| app.path().app_data_dir())
+                .unwrap_or_else(|_| dir.clone())
+                .join("LEQtion");
+
             app.manage(AppState {
                 session: Mutex::new(Session::new(settings.engine.clone(), settings.transfer)),
                 settings: Mutex::new(settings),
                 settings_path,
+                projects: ProjectStore::new(projects_root),
             });
             Ok(())
         })
@@ -674,6 +980,18 @@ pub fn run() {
             start_logging,
             stop_logging,
             logging_status,
+            list_projects,
+            create_project,
+            open_project,
+            close_project,
+            rename_project,
+            delete_project,
+            list_shows,
+            save_show,
+            update_show,
+            load_show,
+            rename_show,
+            delete_show,
         ])
         .run(tauri::generate_context!())
         .expect("error while running LEQtion");

@@ -55,6 +55,17 @@ pub struct Settings {
     /// this file becoming a second place the UI is defined.
     #[serde(default)]
     pub layout: serde_json::Value,
+    /// Directory name of the last open project, and the show inside it, so the
+    /// app comes back where it was left.
+    ///
+    /// A *pointer*, not a copy: the configuration above stays the live state, and
+    /// a project that has been moved or deleted since just means the app opens
+    /// with no project. **Nothing here may become a requirement to measure** —
+    /// see `docs/tuning.md` §1.3.
+    #[serde(default)]
+    pub last_project: Option<String>,
+    #[serde(default)]
+    pub last_show: Option<String>,
 }
 
 impl Default for Settings {
@@ -73,6 +84,8 @@ impl Default for Settings {
             sample_rate: None,
             calibrations: Vec::new(),
             layout: serde_json::Value::Null,
+            last_project: None,
+            last_show: None,
         }
     }
 }

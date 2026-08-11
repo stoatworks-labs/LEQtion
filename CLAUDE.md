@@ -9,7 +9,7 @@ Command reference. For the model, the invariants and the traps, read
 npm install
 npm run app          # tauri dev
 npm run app:build    # bundle (.dmg / .msi / .AppImage)
-npm test             # vitest — 23 tests
+npm test             # vitest — 36 tests
 npm run typecheck    # tsc -b
 npm run lint         # oxlint
 ```
@@ -62,4 +62,14 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
   A trace that gets flatter as you zoom out is a bug, not a rendering choice.
 - **The log writes on the history's interval, never its own clock**, and every row states
   whether it is calibrated and how many frames have been dropped.
+- **A show records a calibration but never applies one**, and loading a show never starts a
+  generator. **Nothing requires a project** — the app still meters with none open.
+- **Deleting a project or show moves it to `.deleted/`**, and the UI says where it went.
 - Public repo, MIT. "Commit" = commit **and** push.
+
+## The tuning thread
+
+`docs/tuning.md` is the design for the arc from projects → trace library → target curves →
+optimiser → processor database → deployment → delay alignment. **Read it before starting any
+of those steps**; §2 (the trace format) and §13 (the invariants) are the parts later work
+depends on. Step 1, projects and shows, is built; everything after it is not.

@@ -32,7 +32,8 @@ src-tauri/
   src/lib.rs                 Tauri commands. Thin — no analysis, ever.
   src/session.rs             Audio → analysis thread → frame events.
   src/settings.rs            One JSON file, written atomically.
-  src/logger.rs              CSV log. The only thing here that writes a file.
+  src/logger.rs              CSV log.
+  src/project.rs             Projects and shows. See docs/tuning.md §1.
   crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 133 tests.
                                generator.rs  signal sources
                                transfer.rs   multi-time-window TF, coherence, delay
@@ -57,13 +58,13 @@ data plotted against them can only be guaranteed to agree if there is one implem
 npm install
 npm run app            # tauri dev
 npm run app:build      # bundle
-npm test               # vitest, 23 tests
+npm test               # vitest, 36 tests
 npm run typecheck      # tsc -b across app/node/test projects
 npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 134 tests
+cd src-tauri && cargo test --workspace     # 168 tests
 ```
 
 ```bash
@@ -172,6 +173,34 @@ noise into a rig before anyone has touched anything.
 `plan_revision` on a frame changes when the band table changes. The UI refetches rather than
 building its own. `bands_db.length === plan.bands.length` is checked before drawing.
 
+### 4.10 A show records a calibration; it never applies one
+
+A **show** (`project.rs`) is a complete saved configuration — engine, transfer, generator,
+input, tile layout. It stores a *snapshot* of the calibration that was in force, and that
+snapshot never reaches the engine: `Show::restore` returns a `ShowRestore`, which has no
+calibration field at all. Live calibration always comes from the device-keyed table in
+`settings.json`.
+
+A calibration belongs to a microphone and a preamp, not to an application state. If a show
+carried its own offset, opening last year's show with this year's microphone would present
+dB SPL derived from hardware that is no longer in the room, and nothing downstream could
+detect it — the same failure §4.4a refuses for the synthetic input, arriving by a different
+door. The snapshot is kept only so a stored trace can say what it was measured against.
+
+### 4.11 Loading a show never starts a generator
+
+§4.8 applies to shows as well as to launch, and more strongly: a show can be loaded with an
+output stream already open and a system live. `Show::restore` forces `Signal::Off` while
+keeping the level and band-limiting, so loading a show that was saved mid-measurement stops
+the noise rather than starting it.
+
+### 4.12 Nothing requires a project
+
+The app meters, logs and calibrates with no project open, exactly as it did before projects
+existed. `settings.json` holds a *pointer* to the last open project, and a project that has
+been moved or deleted since resolves to nothing rather than to an error. Someone opening a
+meter to check a level must never have to name a project first.
+
 ## 5. Traps
 
 **Spectrum normalisation is `2/(N·S2)`.** The `1/N` is easy to omit and costs 10·log10(N) —
@@ -196,6 +225,17 @@ name and the fast path applies. `capture --list` prints both lists.
 **The pink normalisation constant is measured, not derived.** `PINK_NORMALISATION` is the
 reciprocal of the pinking filter's RMS gain, measured over four million samples. It does not
 depend on the sample rate. If pink noise comes out at the wrong level, this is the number.
+
+**Deleting a project or a show is a move, not an unlink.** Both go to a `.deleted/` folder
+and the command returns the path, which the UI shows. A button labelled "Delete" that
+actually means "move" has to say so, and an unreadable show file is left exactly where it is
+rather than replaced with a default — unlike a tile layout, a show is work someone did.
+
+**Project names become directory names, so they are sanitised for Windows.** Windows forbids
+`\ / : * ? " < > |`, silently strips trailing dots and spaces, and reserves `CON`, `PRN`,
+`AUX`, `NUL`, `COM1`–`COM9` and `LPT1`–`LPT9` even with an extension. A name that saves on
+macOS and cannot be opened on Windows is the failure this prevents; leading dots go too,
+because a hidden directory would save and then never appear in the list.
 
 **cpal 0.18 renamed things.** `device.description()?.name()`, not `device.name()`.
 `SampleRate` is a plain `u32` alias. One `cpal::Error`, no `StreamError`.

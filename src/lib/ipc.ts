@@ -31,9 +31,13 @@ import type {
   HistoryPoint,
   HostInfo,
   LogStatus,
+  OpenProject,
+  ProjectSummary,
   ReferenceSource,
   SeriesInfo,
   SessionStatus,
+  ShowApplied,
+  ShowSummary,
   Startup,
   TransferConfig,
   TransferPlan,
@@ -83,6 +87,23 @@ export const api = {
   setDelaySamples: (samples: number) => invoke<void>('set_delay_samples', { samples }),
   impulseResponse: (maxPoints: number) =>
     invoke<number[]>('impulse_response', { maxPoints }),
+
+  listProjects: () => invoke<ProjectSummary[]>('list_projects'),
+  createProject: (name: string) => invoke<ProjectSummary>('create_project', { name }),
+  openProject: (dir: string) => invoke<OpenProject>('open_project', { dir }),
+  closeProject: () => invoke<void>('close_project'),
+  renameProject: (dir: string, name: string) =>
+    invoke<ProjectSummary>('rename_project', { dir, name }),
+  /** Returns where the project was moved to — deletion is a move, not an unlink. */
+  deleteProject: (dir: string) => invoke<string>('delete_project', { dir }),
+
+  listShows: (dir: string) => invoke<ShowSummary[]>('list_shows', { dir }),
+  saveShow: (dir: string, name: string) => invoke<ShowSummary>('save_show', { dir, name }),
+  updateShow: (dir: string, id: string) => invoke<ShowSummary>('update_show', { dir, id }),
+  loadShow: (dir: string, id: string) => invoke<ShowApplied>('load_show', { dir, id }),
+  renameShow: (dir: string, id: string, name: string, notes?: string) =>
+    invoke<ShowSummary>('rename_show', { dir, id, name, notes: notes ?? null }),
+  deleteShow: (dir: string, id: string) => invoke<string>('delete_show', { dir, id }),
 };
 
 type FrameListener = (frame: Frame) => void;

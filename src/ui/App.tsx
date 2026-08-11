@@ -4,6 +4,7 @@ import { useStore } from '../state/store';
 
 import { CalibrationDialog } from './CalibrationDialog';
 import { DeviceBar } from './DeviceBar';
+import { ProjectBar } from './ProjectBar';
 import { TileGrid } from './TileGrid';
 import { Toolbar } from './Toolbar';
 
@@ -29,6 +30,7 @@ export function App() {
 
   return (
     <main className="app">
+      <ProjectBar />
       <DeviceBar onCalibrate={() => setCalibrating(true)} />
       <Toolbar />
 
