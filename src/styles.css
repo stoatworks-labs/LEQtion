@@ -47,6 +47,19 @@ body.dragging {
   user-select: none;
 }
 
+/* Chrome is furniture, not content. Double-clicking near a control in a desktop
+   app should not leave a field label highlighted in blue. Readouts and inputs
+   are deliberately left selectable — a level someone wants to copy into a
+   report is exactly the thing that should still select. */
+label,
+h1,
+h2,
+.tile-head,
+.banner,
+.app-foot {
+  user-select: none;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -318,6 +331,9 @@ input[type='number'] {
 .grid {
   display: grid;
   flex: 1 1 auto;
+  /* A flex item defaults to min-height: auto, which refuses to shrink below its
+     content — and a scroll container that never shrinks never scrolls. */
+  min-height: 0;
   overflow: auto;
   align-content: start;
   padding-bottom: 4px;
@@ -436,6 +452,31 @@ canvas.fill {
 
 .tile-warn {
   color: var(--warn);
+}
+
+/* A render fault, shown in place of whatever failed to draw. Deliberately not
+   styled as an alarm: the measurement behind it is still good, and the thing
+   that is wrong is the picture, not the numbers. */
+.render-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.render-error strong {
+  color: var(--warn);
+}
+
+.render-error-detail {
+  margin: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .tile-corner {

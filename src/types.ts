@@ -148,6 +148,12 @@ export interface Frame {
   dominantHz: number | null;
   inputPeakDbfs: number;
   clipped: boolean;
+  /**
+   * Seconds the input has been *exactly* zero. Digital silence, not a quiet
+   * room — the engine reports the fact and leaves the cause to the caller,
+   * because only the caller knows which source is open.
+   */
+  inputSilentSeconds: number;
   elapsedSeconds: number;
   calibration?: CalibrationStatus;
   /** Present only while a reference source is selected. */

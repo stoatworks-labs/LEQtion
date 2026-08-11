@@ -34,7 +34,7 @@ src-tauri/
   src/settings.rs            One JSON file, written atomically.
   src/logger.rs              CSV log.
   src/project.rs             Projects and shows. See docs/tuning.md §1.
-  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 133 tests.
+  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 139 tests.
                                generator.rs  signal sources
                                transfer.rs   multi-time-window TF, coherence, delay
                                history.rs    levels over time, per-interval buckets
@@ -64,7 +64,7 @@ npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 168 tests
+cd src-tauri && cargo test --workspace     # 174 tests
 ```
 
 ```bash
@@ -246,7 +246,18 @@ killed when it opens an input, and the crash points at the audio driver rather t
 missing key. A `tauri dev` build is not bundled, so permission is attributed to the terminal.
 
 **Every sample exactly zero** means macOS denied microphone access — the stream opens and
-the callback fires regardless. `examples/capture.rs` detects and explains this.
+the callback fires regardless. `examples/capture.rs` detects and explains this, and the app
+does too: `Engine` counts unbroken zero seconds into `Frame::input_silent_seconds` and
+`SilentInputBanner` says so on screen. The engine only reports the fact; naming the cause is
+the caller's job, since a generator switched off looks identical from inside the analysis.
+
+**A denied microphone can also present as a *hang* rather than as silence.** Which one you
+get depends on the state of the TCC entry for the bundle id, and the entry is keyed to a
+code signature — so a Developer ID build and an ad-hoc `cargo build` of the same app do not
+share it. `Failed to match existing code requirement for subject com.allansargeant.leqtion
+and service kTCCServiceMicrophone` in `log show --predicate 'subsystem == "com.apple.TCC"'`
+is the tell, and `tccutil reset Microphone com.allansargeant.leqtion` is the fix. Neither
+failure reaches the app as an error.
 
 ## 6. What has and has not been verified
 
@@ -268,8 +279,12 @@ Verified:
 **Not** verified:
 
 - Against a reference sound level meter. No absolute accuracy claim is supported.
-- With a hardware calibrator. The calibration workflow is tested against synthetic input
-  only; no calibrator has been connected.
+- With a hardware calibrator. No calibrator has been connected, so `Ready` and
+  `accept_calibration` have never run against real hardware. The *rejection* paths have:
+  the dialog was driven against a live microphone and reported `Clipping` and
+  `WrongFrequency` with real values. That exercise is what found both calibration bugs
+  fixed since — the wire-format one that took the whole UI down, and the held-peak one that
+  pinned a fresh run at `Clipping`. Assume the accept path still has its own.
 - ASIO. It compiles behind a feature flag and has never carried audio — the only Windows
   machine here is ARM64, where ASIO drivers barely exist. See `docs/asio.md`.
 - Anything downstream of a converter. No signal has been round-tripped through an
