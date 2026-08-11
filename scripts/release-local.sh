@@ -12,6 +12,19 @@
 #   scripts/release-local.sh --version 0.2.0  set an explicit version
 #   scripts/release-local.sh --upload         tag and publish the GitHub release
 #
+# ## Pre-releases
+#
+# A version carrying a semver pre-release identifier — `0.2.0-beta.1` — is
+# published as a GitHub pre-release automatically. There is no separate flag,
+# because a flag is something to forget: the version string is the single fact
+# that decides the tag, the release's pre-release status, and the warning banner
+# the app shows (`src/lib/version.ts` reads the same string back out of the
+# binary). They cannot disagree.
+#
+# Pre-releases are deliberately left out of the website and the README download
+# block. Those advertise the current release, and a beta that appears beside it
+# is a beta someone installs by accident.
+#
 # ## macOS only, and that is a statement about the builds, not the code
 #
 # Tauri cannot cross-bundle: an .app, an .msi and an .AppImage each have to be
@@ -51,6 +64,17 @@ done
 current="$(node -p "require('$repo/package.json').version")"
 version="${version:-$current}"
 rl_init "$NAME" "$SLUG" "$version" "$IDENT" "$out"
+
+# Anything after a `-` is a semver pre-release identifier. One fact, three
+# consequences: the GitHub release is flagged, the title is labelled, and the app
+# itself shows a permanent banner (it reads its own version at startup).
+prerelease=0
+case "$version" in
+  *-*) prerelease=1 ;;
+esac
+if [[ "$prerelease" -eq 1 ]]; then
+  rl_note "pre-release $version — will be published as a GitHub pre-release"
+fi
 
 # ------------------------------------------------------------- versioning ---
 # Three files carry the version and they must agree: package.json is what the
@@ -160,9 +184,22 @@ if [[ "$upload" -eq 1 ]]; then
   git push origin "v$version"
 
   rl_step "github release"
+  title="$NAME v$version"
+  args=()
+  if [[ "$prerelease" -eq 1 ]]; then
+    title="$NAME NEXT v$version (pre-release)"
+    # `--prerelease` is what keeps it out of "Latest release", and that is the
+    # thing that actually stops someone downloading a beta by accident — release
+    # notes are read after the download, not before it.
+    args+=(--prerelease)
+  fi
+  # `${args[@]+...}` rather than a bare `"${args[@]}"`: this script runs under
+  # `set -u`, and macOS still ships bash 3.2, where expanding an empty array
+  # under `set -u` is an unbound-variable error rather than nothing.
   gh release create "v$version" "$out"/*.dmg "$out"/*.zip \
-    --title "$NAME v$version" \
-    --notes-file "$repo/docs/release-notes-v$version.md"
+    --title "$title" \
+    --notes-file "$repo/docs/release-notes-v$version.md" \
+    ${args[@]+"${args[@]}"}
   rl_note "https://github.com/stoatworks-labs/$NAME/releases/tag/v$version"
 fi
 

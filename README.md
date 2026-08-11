@@ -1,5 +1,18 @@
 # LEQtion
 
+> ## ⚠️ You are on the `next` branch — LEQtion NEXT
+>
+> This branch carries **unreleased, in-progress work** towards exporting DSP settings for
+> amplifiers and system processors. Its builds are published as GitHub **pre-releases** and
+> are not the current version.
+>
+> **For the released application, go to [`main`](https://github.com/stoatworks-labs/LEQtion/tree/main)
+> or the [latest release](https://github.com/stoatworks-labs/LEQtion/releases/latest).**
+>
+> The plan for this thread of work is [`docs/tuning.md`](docs/tuning.md). Only step 1 —
+> projects and shows — is built. Anything saved by a build from this branch may not open in
+> a later one.
+
 > **AI-assisted project.** This codebase was created with [Claude Code](https://claude.com/claude-code)
 > (Anthropic), directed and reviewed by a human author. The DSP is verified numerically:
 > the A and C weighting curves reproduce the IEC 61672-1 table to better than 0.06 dB at

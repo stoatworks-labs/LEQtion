@@ -560,6 +560,16 @@ canvas.fill {
   flex: 1 1 auto;
 }
 
+/* Amber, not the error red the base banner uses: a pre-release build is a caution
+   that is true for the whole session, and painting it the same colour as "your
+   input just clipped" would teach people to stop reading both. */
+.banner.beta {
+  border-color: #5a4620;
+  background: #241d10;
+  color: var(--warn);
+  flex: 0 0 auto;
+}
+
 .app-foot {
   display: flex;
   justify-content: space-between;
