@@ -3,6 +3,8 @@ import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { GRID_COLS, GRID_GAP, ROW_HEIGHT, useStore, type Tile } from '../state/store';
 import { tileType } from '../tiles/registry';
 
+import { ErrorBoundary } from './ErrorBoundary';
+
 /**
  * The configurable tile grid.
  *
@@ -93,9 +95,14 @@ export function TileGrid() {
       className="grid"
       style={{
         gridTemplateColumns: `repeat(${GRID_COLS}, minmax(0, 1fr))`,
+        // Explicit rows rather than a min-height. A min-height on the element
+        // that also carries `overflow: auto` makes the scroll container itself
+        // grow instead of scrolling, so a tile dragged — or added — below the
+        // fold became unreachable: no scrollbar, and the wheel did nothing.
+        // Declaring the rows makes the same extent *content*, which scrolls.
+        gridTemplateRows: `repeat(${rows}, ${ROW_HEIGHT}px)`,
         gridAutoRows: `${ROW_HEIGHT}px`,
         gap: GRID_GAP,
-        minHeight: rows * (ROW_HEIGHT + GRID_GAP),
       }}
     >
       {layout.tiles.map((tile) => (
@@ -164,13 +171,18 @@ function TileFrame({ tile, onBeginDrag }: { tile: Tile; onBeginDrag: (d: Drag) =
         </div>
       </header>
 
-      {editing ? (
-        <div className="tile-settings">
-          <type.Settings tile={tile} />
-        </div>
-      ) : (
-        <type.Body tile={tile} />
-      )}
+      {/* Per tile, so one tile that cannot draw does not stop its neighbours
+          from updating. Keyed on the mode: switching between settings and body
+          clears a previous failure rather than leaving the frame stuck. */}
+      <ErrorBoundary key={editing ? 'settings' : 'body'} label={type.title}>
+        {editing ? (
+          <div className="tile-settings">
+            <type.Settings tile={tile} />
+          </div>
+        ) : (
+          <type.Body tile={tile} />
+        )}
+      </ErrorBoundary>
 
       <button
         type="button"

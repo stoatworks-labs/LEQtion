@@ -35,7 +35,11 @@ pub const RAMP_SECONDS: f64 = 0.02;
 pub const DEFAULT_LEVEL_DBFS: f64 = -20.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Signal {
     /// Silence. Still runs the stream, so the output stays open and the
     /// interface does not click on every mute.
@@ -476,6 +480,33 @@ mod tests {
     use crate::window::WindowKind;
 
     const RATE: f64 = 48000.0;
+
+    /// `Signal` crosses in both directions, so the casing has to match what the
+    /// UI sends as well as what it reads. `GeneratorTile.tsx` posts
+    /// `{ kind: 'sweep', fromHz, toHz, seconds }`; against the Rust field names
+    /// that fails to deserialise and selecting Sweep does nothing at all.
+    #[test]
+    fn a_sweep_round_trips_through_the_json_the_ui_sends() {
+        let from_ui = serde_json::json!({
+            "kind": "sweep",
+            "fromHz": 20.0,
+            "toHz": 20000.0,
+            "seconds": 2.0,
+        });
+        let signal: Signal = serde_json::from_value(from_ui).expect("deserialises");
+        assert_eq!(
+            signal,
+            Signal::Sweep {
+                from_hz: 20.0,
+                to_hz: 20000.0,
+                seconds: 2.0,
+            }
+        );
+
+        let back = serde_json::to_value(signal).expect("serialises");
+        assert_eq!(back["fromHz"], 20.0, "{back}");
+        assert!(back.get("from_hz").is_none(), "{back}");
+    }
 
     fn generate(config: GeneratorConfig, seconds: f64) -> Vec<f32> {
         let mut g = Generator::new(config, RATE);

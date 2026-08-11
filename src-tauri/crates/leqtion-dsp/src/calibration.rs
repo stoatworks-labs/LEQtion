@@ -119,7 +119,14 @@ impl Calibration {
 
 /// Why a calibration run is not yet acceptable — or that it is.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "camelCase")]
+// `rename_all` renames the *variants*; the fields inside a struct variant need
+// `rename_all_fields` as well. Without it the UI reads `levelDbfs` off a
+// payload carrying `level_dbfs`, gets `undefined`, and the dialog throws.
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum CalibrationStatus {
     /// Not enough signal observed yet.
     Settling { progress: f64 },
@@ -318,6 +325,58 @@ impl CalibrationRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every field the dialog reads off a status, in the casing it reads them.
+    ///
+    /// `CalibrationDialog.tsx` calls `.toFixed()` on these directly, so a field
+    /// arriving under its Rust name is not a cosmetic mismatch — it is
+    /// `undefined.toFixed()`, which throws during render and, with no error
+    /// boundary above it, unmounts the whole app. The `ready` variant matters
+    /// most: that is the *successful* path, so getting it wrong means a real
+    /// calibrator takes the app down at the moment it is about to work.
+    #[test]
+    fn every_status_variant_crosses_to_the_ui_in_camel_case() {
+        let cases = [
+            (
+                CalibrationStatus::Unstable { spread_db: 0.4 },
+                vec!["spreadDb"],
+            ),
+            (
+                CalibrationStatus::WrongFrequency {
+                    measured_hz: 250.0,
+                    expected_hz: 1000.0,
+                },
+                vec!["measuredHz", "expectedHz"],
+            ),
+            (
+                CalibrationStatus::TooQuiet { level_dbfs: -200.0 },
+                vec!["levelDbfs"],
+            ),
+            (
+                CalibrationStatus::Ready {
+                    measured_dbfs: -26.0,
+                    spread_db: 0.05,
+                    offset_db: 120.0,
+                },
+                vec!["measuredDbfs", "spreadDb", "offsetDb"],
+            ),
+        ];
+
+        for (status, keys) in cases {
+            let json = serde_json::to_value(&status).expect("serialises");
+            for key in keys {
+                assert!(json.get(key).is_some(), "missing {key} in {json}");
+            }
+            let snake: Vec<&str> = json
+                .as_object()
+                .expect("an object")
+                .keys()
+                .filter(|k| k.contains('_'))
+                .map(|k| k.as_str())
+                .collect();
+            assert!(snake.is_empty(), "snake_case survived: {snake:?} in {json}");
+        }
+    }
 
     fn steady(run: &mut CalibrationRun, level_dbfs: f64, seconds: f64) {
         let block = 0.02;
