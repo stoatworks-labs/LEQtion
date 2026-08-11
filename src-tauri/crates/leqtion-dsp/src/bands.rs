@@ -67,6 +67,7 @@ impl Fraction {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Band {
     /// Band index k, where fc = 1000 · 2^(k/N).
     pub k: i32,
@@ -85,6 +86,7 @@ pub struct Band {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BandPlan {
     pub fraction: Fraction,
     pub fft_size: usize,
@@ -291,6 +293,24 @@ pub fn power_to_db(p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `types.ts` declares `binHz` and `resolvedAboveHz`. Emitting the Rust
+    /// field names instead is invisible to TypeScript — `invoke<BandPlan>` is
+    /// an unchecked cast — and lands as `undefined` at the point of use.
+    #[test]
+    fn the_band_plan_crosses_to_the_ui_in_camel_case() {
+        let plan = build_band_plan(Fraction::Twelfth, 16384, 48000.0, 1.5);
+        let json = serde_json::to_value(&plan).expect("serialises");
+        for key in ["fftSize", "sampleRate", "binHz", "resolvedAboveHz"] {
+            assert!(json.get(key).is_some(), "missing {key} in {json}");
+        }
+        for key in ["fft_size", "sample_rate", "bin_hz", "resolved_above_hz"] {
+            assert!(json.get(key).is_none(), "stale {key} in {json}");
+        }
+        let band = &json["bands"][0];
+        assert!(band.get("binLo").is_some(), "{band}");
+        assert!(band.get("bin_lo").is_none(), "{band}");
+    }
 
     #[test]
     fn third_octave_centres_are_iso_preferred() {

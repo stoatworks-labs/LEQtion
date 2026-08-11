@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { routeExternalLinksToBrowser } from './lib/externalLinks';
 import { App } from './ui/App';
+import { ErrorBoundary } from './ui/ErrorBoundary';
 import './styles.css';
 
 // The About dialog's data file ships a version baked at sync time; this is the
@@ -16,6 +17,8 @@ routeExternalLinksToBrowser();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

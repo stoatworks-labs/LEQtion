@@ -83,7 +83,11 @@ impl HistoryConfig {
 /// series properly — "LAF" is not a name anyone should have to parse out of
 /// `spl:a:fast`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum SeriesKind {
     /// Time-weighted sound level, one per frequency and time weighting.
     Spl {
@@ -618,6 +622,25 @@ mod tests {
         let json = serde_json::to_value(&info).expect("serialises");
         assert_eq!(json["id"], "leq:leq-a", "{json}");
         assert_eq!(json["leqId"], "leq-a");
+    }
+
+    /// `rename_all` renames variants, not the fields inside them. `types.ts`
+    /// declares `timeWeighting`, so a variant field left as `time_weighting`
+    /// arrives undefined and the series loses its time weighting silently.
+    #[test]
+    fn a_spl_series_serialises_its_variant_fields_in_camel_case() {
+        let kind = SeriesKind::Spl {
+            weighting: Weighting::A,
+            time_weighting: TimeWeighting::Fast,
+        };
+        let info = SeriesInfo {
+            id: kind.id(),
+            label: kind.label(),
+            kind,
+        };
+        let json = serde_json::to_value(&info).expect("serialises");
+        assert_eq!(json["timeWeighting"], "fast", "{json}");
+        assert!(json.get("time_weighting").is_none(), "{json}");
     }
 
     #[test]

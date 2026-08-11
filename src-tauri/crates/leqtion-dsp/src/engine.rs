@@ -250,6 +250,15 @@ pub struct Frame {
     /// calibration — this is a converter headroom figure, not a sound level.
     pub input_peak_dbfs: f64,
     pub clipped: bool,
+    /// How long the input has been *exactly* zero, in seconds, counting back
+    /// from now. Zero whenever any sample is non-zero.
+    ///
+    /// The engine reports the fact and says nothing about the cause, because
+    /// from inside the analysis there is no difference between a denied
+    /// microphone, an unplugged channel and a generator switched off. Only the
+    /// caller knows which source is open, so only the caller can name it — the
+    /// same split as §4.4a.
+    pub input_silent_seconds: f64,
     /// Seconds of audio the engine has processed since the last reset.
     pub elapsed_seconds: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -267,6 +276,8 @@ pub struct Engine {
     run: Option<CalibrationRun>,
     mono: Vec<f32>,
     elapsed: f64,
+    /// Seconds of unbroken, exactly-zero input. See [`Frame::input_silent_seconds`].
+    silent: f64,
     plan_revision: u64,
     history: History,
     /// Reused buffer of one value per series, so the per-block feed into the
@@ -301,6 +312,7 @@ impl Engine {
             run: None,
             mono: Vec::new(),
             elapsed: 0.0,
+            silent: 0.0,
             plan_revision: 1,
             history: History::new(config_history, series),
             history_values: Vec::new(),
@@ -410,7 +422,24 @@ impl Engine {
         let seconds = frames as f64 / self.sample_rate;
         self.elapsed += seconds;
 
-        self.input_peak.push(&self.mono);
+        // The *block* peak, kept separate from the held one below: the meter
+        // wants the highest peak of the whole measurement, the calibration run
+        // wants the level right now. See where it is handed to the run.
+        let block_peak = self.input_peak.push(&self.mono);
+
+        // Digital silence is not quiet audio, it is *no* audio, and the two look
+        // identical on every meter in the app — a denied microphone still opens
+        // the stream and still fires the callback (AGENTS.md §5). Exact zero is
+        // the test: a live input, even a muted one with the gain down, carries a
+        // converter's own noise and never produces an unbroken run of zeros.
+        // Kept as a duration because one silent block is a gap and several
+        // seconds of them is a broken measurement.
+        if self.mono.iter().any(|&s| s != 0.0) {
+            self.silent = 0.0;
+        } else {
+            self.silent += seconds;
+        }
+
         // Take the mono buffer out so the paths can be borrowed mutably
         // alongside it. It is put straight back; nothing else touches it.
         let mono = std::mem::take(&mut self.mono);
@@ -454,7 +483,14 @@ impl Engine {
             run.push(CalibrationSample {
                 level_dbfs: mean_square_to_dbfs(z.block_ms),
                 dominant_hz: self.spectrum.dominant_hz(),
-                peak: self.input_peak.peak(),
+                // The block peak, not `input_peak.peak()`, which is held for
+                // the life of the measurement. Held, a single clip anywhere
+                // earlier pins the run at `Clipping` for good: the dialog says
+                // to turn the gain down and start again, the user does, the
+                // level drops forty decibels, and the answer never changes
+                // because the peak being tested happened minutes ago. Nothing
+                // short of Reset measurement clears it, and nothing says so.
+                peak: block_peak,
                 seconds,
             });
         }
@@ -526,6 +562,7 @@ impl Engine {
             dominant_hz: self.spectrum.dominant_hz(),
             input_peak_dbfs: amplitude_to_dbfs(self.input_peak.peak()),
             clipped: self.input_peak.clipped(),
+            input_silent_seconds: self.silent,
             elapsed_seconds: self.elapsed,
             calibration: self.run.as_ref().map(|r| r.status()),
         }
@@ -956,6 +993,75 @@ mod tests {
         let mut e = Engine::new(cfg, RATE);
         e.push_interleaved(&sine(1000.0, 1.0, 0.5, 2), 2);
         assert!(e.frame().spl[2].level > -1.0);
+    }
+
+    /// "Turn the preamp gain down and start again" has to actually work.
+    ///
+    /// A clip inside a run invalidates that run, and latching it is deliberate.
+    /// But the run that follows must judge the input as it is now: the measured
+    /// peak is held for the life of the *measurement*, so a fresh run fed that
+    /// held value is pinned at `Clipping` by something that happened minutes
+    /// ago, and the advice in the dialog cannot be acted on at all.
+    #[test]
+    fn a_new_calibration_run_is_not_poisoned_by_an_earlier_clip() {
+        let mut e = engine(vec![]);
+        e.begin_calibration(CalibrationTarget::default());
+
+        e.push_interleaved(&[1.0, -1.0, 1.0, -1.0], 1);
+        assert!(
+            matches!(e.frame().calibration, Some(CalibrationStatus::Clipping)),
+            "a clipped block must invalidate the run it lands in"
+        );
+
+        // Gain down, calibrator still on the capsule, and start again.
+        e.begin_calibration(CalibrationTarget::default());
+        for _ in 0..40 {
+            e.push_interleaved(&sine(1000.0, 0.05, 0.05, 1), 1);
+        }
+
+        assert!(
+            e.frame().input_peak_dbfs > -1.0,
+            "the measurement's held peak still stands — that is the meter's job"
+        );
+        assert!(
+            !matches!(e.frame().calibration, Some(CalibrationStatus::Clipping)),
+            "the new run must judge the input as it is now"
+        );
+    }
+
+    /// Digital silence has to be distinguishable from a quiet room, because a
+    /// denied microphone produces the first and looks like the second on every
+    /// readout in the app.
+    #[test]
+    fn exactly_zero_input_is_reported_as_silence_and_a_quiet_room_is_not() {
+        let mut e = engine(vec![]);
+
+        e.push_interleaved(&vec![0.0f32; 4800], 1);
+        assert!(
+            (e.frame().input_silent_seconds - 0.1).abs() < 1e-9,
+            "0.1 s of zeros should read as 0.1 s of silence"
+        );
+
+        e.push_interleaved(&vec![0.0f32; 4800], 1);
+        assert!(
+            (e.frame().input_silent_seconds - 0.2).abs() < 1e-9,
+            "silence accumulates while it is unbroken"
+        );
+
+        // A converter's own noise floor, far below anything audible, is still
+        // audio and must clear the counter.
+        e.push_interleaved(&sine(1000.0, 1e-6, 0.1, 1), 1);
+        assert_eq!(
+            e.frame().input_silent_seconds,
+            0.0,
+            "a real but tiny signal is not silence"
+        );
+
+        e.push_interleaved(&vec![0.0f32; 480], 1);
+        assert!(
+            e.frame().input_silent_seconds > 0.0,
+            "the counter restarts after the signal stops"
+        );
     }
 
     #[test]
