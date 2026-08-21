@@ -34,6 +34,8 @@
 //! [`Capture`], which is why `hosts`, `devices` and `open` are the only three
 //! places in the codebase that know it is not real.
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod profiles;
 pub mod session;
 pub mod synthetic;

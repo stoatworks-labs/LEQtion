@@ -24,6 +24,15 @@ tracing = "0.1"
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2-avf-audio = { version = "0.3", features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
 
+# Handing the JavaVM and Context to cpal, which needs both to reach
+# AudioManager over JNI and has no way to obtain them under Tauri. See
+# android.rs. jni-sys rather than the `jni` crate deliberately: this is four
+# raw calls, and the raw bindings do not have to agree with whichever version
+# of the high-level wrapper cpal happens to use.
+[target.'cfg(target_os = "android")'.dependencies]
+jni-sys = "0.3"
+ndk-context = "0.1"
+
 [features]
 # Windows ASIO. Off by default because it cannot be built without the Steinberg
 # SDK, which is not redistributable — see docs/asio.md.

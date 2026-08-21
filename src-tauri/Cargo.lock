@@ -2048,7 +2048,9 @@ name = "leqtion-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "jni-sys 0.3.1",
  "leqtion-dsp",
+ "ndk-context",
  "objc2-avf-audio",
  "rtrb",
  "serde",
