@@ -34,6 +34,7 @@
 //! [`Capture`], which is why `hosts`, `devices` and `open` are the only three
 //! places in the codebase that know it is not real.
 
+pub mod profiles;
 pub mod synthetic;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

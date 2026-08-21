@@ -58,13 +58,13 @@ data plotted against them can only be guaranteed to agree if there is one implem
 npm install
 npm run app            # tauri dev
 npm run app:build      # bundle
-npm test               # vitest, 36 tests
+npm test               # vitest, 40 tests
 npm run typecheck      # tsc -b across app/node/test projects
 npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 174 tests
+cd src-tauri && cargo test --workspace     # 181 tests
 ```
 
 ```bash
@@ -109,6 +109,28 @@ meant to agree.
 `Frame::calibrated` is false until a calibration is loaded, and every readout that shows a
 level also shows whether it is dB SPL or dBFS. Do not add a display path that omits it.
 
+An offset can now arrive without a calibrator in the room, so `Calibration::source`
+records which of three things produced it — see `CalibrationSource`:
+
+- `Calibrator` — a hardware calibrator, on this capsule, on this input, at this gain. The
+  only one that measured the chain actually in use.
+- `PlatformSpec` — the platform specifies the sensitivity of the capture path. Android's
+  unprocessed audio source: CDD **C-1-5** requires 94 dB SPL at 1 kHz to read −36 dBFS,
+  which is an offset of exactly **130 dB** on any device declaring
+  `PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED`. Derived, sourced and tested in
+  `leqtion-audio::profiles`.
+- `DeviceProfile` — measured on one unit of a model and assumed to hold for the rest.
+
+**Only `Calibrator` may be described as "calibrated" without qualification.** The other two
+are good enough to display an SPL and not good enough to imply a calibrator was used, so
+the source travels with the number to the readout. This extends the rule above rather than
+loosening it: the failure mode is the one recorded in the `calibration.rs` module docs — an
+offset that is wrong is invisible afterwards, because everything downstream of it is
+self-consistent and uniformly wrong.
+
+A user calibration always beats a profile. Resolution is in `src/lib.rs` where the stored
+calibration is applied, and the fallback is deliberately `or_else`, not a merge.
+
 ### 4.4a The synthetic input can never be calibrated
 
 `leqtion-audio::synthetic` offers the generator as a *backend*, so the analyser can be run
@@ -142,6 +164,27 @@ Three things in there are load-bearing:
 - **Every log row carries `calibrated` and `dropped_frames`.** A calibration can change
   mid-log, and a gap in the audio means the period is short by an unknown amount. Both
   have to be in the file, not just on screen.
+
+### 4.4c A profile is never inferred from `target_os`
+
+On Android the guarantee attaches to **one audio source**, not to the operating system. A
+stream opened on any other source on the same handset carries no guarantee, and applying
+the 130 dB offset to it would produce a confident, wrong SPL — the §4.4a failure again,
+reached by a different route. So `profiles::current_input_path()` must return
+`InputPath::AndroidUnprocessed` only when something has actually requested the unprocessed
+source *and* had the request honoured.
+
+It returns `Unknown` today, and `nothing_claims_a_known_gain_until_the_port_lands` pins
+that. **cpal cannot currently request the unprocessed path** — its AAudio backend sets only
+device id, performance mode and sample rate, never `AAudioStreamBuilder_setInputPreset`,
+and AAudio's default input preset is `VOICE_RECOGNITION`, which is processed. Reaching the
+guarantee needs a patched cpal or a small AAudio shim, plus a JNI read of the `AudioManager`
+property. Until then Android would show dBFS, which is correct rather than missing.
+
+On iOS the session mode must be `AVAudioSessionModeMeasurement` before the input opens, or
+AGC is in the path and no offset means anything. `IOS_PROFILES` is empty because Apple
+publishes no sensitivity figure and there is no public per-model dataset; entries may only
+come from a calibrator run on that model.
 
 ### 4.5 The audio callback does not allocate, lock or block
 

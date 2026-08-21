@@ -125,6 +125,16 @@ export interface CalibrationTarget {
   frequencyHz: number;
 }
 
+/**
+ * `leqtion_dsp::calibration::CalibrationSource`
+ *
+ * Where the offset came from. Only `calibrator` was measured on the input it
+ * is applied to; the other two describe a class of inputs this one is assumed
+ * to belong to, and must be shown with their provenance attached rather than
+ * described as "calibrated" without qualification. See AGENTS.md §4.4.
+ */
+export type CalibrationSource = 'calibrator' | 'platformSpec' | 'deviceProfile';
+
 /** `leqtion_dsp::calibration::Calibration` */
 export interface Calibration {
   offsetDb: number;
@@ -133,6 +143,7 @@ export interface Calibration {
   device: string;
   channel: number;
   takenAt: string;
+  source: CalibrationSource;
 }
 
 /** `leqtion_dsp::engine::Frame` */

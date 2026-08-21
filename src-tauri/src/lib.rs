@@ -189,7 +189,14 @@ fn start(
         settings.host = Some(info.host.clone());
         settings.device = Some(info.device.clone());
         settings.sample_rate = Some(info.sample_rate);
-        let cal = settings.calibration_for(&info.device).cloned();
+        // A calibrator run always wins. It measured this capsule on this
+        // input; a platform profile only describes the class of input the
+        // samples arrived through, and would be the worse of the two answers
+        // in every case where they disagree.
+        let cal = settings.calibration_for(&info.device).cloned().or_else(|| {
+            leqtion_audio::profiles::profile_for(leqtion_audio::profiles::current_input_path())
+                .map(|p| p.calibration(&info.device))
+        });
         drop(settings);
         state.with_analysis(|a| a.engine.set_calibration(cal))?;
     }

@@ -69,6 +69,56 @@ pub const STANDARD_TARGETS: &[CalibrationTarget] = &[
     },
 ];
 
+/// Where an offset came from.
+///
+/// The engine applies the offset the same way whatever its provenance — it is
+/// one addition — but the three sources are not equally trustworthy, and that
+/// difference has to survive all the way to the readout.
+///
+/// This extends §4.4 rather than relaxing it. The rule was that an
+/// uncalibrated level is never presented as SPL, and it still holds: what
+/// changes is that a level can now become presentable without a calibrator in
+/// the room, on an input whose sensitivity is published. The failure mode is
+/// unchanged and is the reason the distinction is carried rather than
+/// flattened — an offset that is wrong is invisible afterwards, because
+/// everything downstream of it is self-consistent and uniformly wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CalibrationSource {
+    /// A hardware acoustic calibrator, on this capsule, on this input, at this
+    /// gain. The only source that measures the chain actually in use.
+    Calibrator,
+    /// The platform specifies the sensitivity of this capture path and the
+    /// device declares that it complies. True of Android's unprocessed audio
+    /// source; see `leqtion-audio::profiles`.
+    PlatformSpec,
+    /// Measured with a calibrator on one unit of this model and assumed to
+    /// hold for other units of it. Carries manufacturing spread, and says
+    /// nothing about a case over the microphone port.
+    DeviceProfile,
+}
+
+impl Default for CalibrationSource {
+    /// Records written before provenance was tracked were all calibrator runs
+    /// — nothing else could produce one — so this is what `serde(default)`
+    /// must yield for a `settings.json` from an older build.
+    fn default() -> Self {
+        CalibrationSource::Calibrator
+    }
+}
+
+impl CalibrationSource {
+    /// Whether the offset was measured on the exact input it will be applied
+    /// to, as opposed to a class of inputs it is assumed to represent.
+    ///
+    /// The distinction the UI needs: anything false here should be shown with
+    /// its provenance attached, and should not be described as a calibration
+    /// without qualification.
+    pub fn is_unit_specific(self) -> bool {
+        matches!(self, CalibrationSource::Calibrator)
+    }
+}
+
 /// An accepted calibration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +138,9 @@ pub struct Calibration {
     /// RFC 3339 timestamp, filled in by the app layer.
     #[serde(default)]
     pub taken_at: String,
+    /// How this offset is known. See [`CalibrationSource`].
+    #[serde(default)]
+    pub source: CalibrationSource,
 }
 
 impl Calibration {
@@ -99,6 +152,7 @@ impl Calibration {
             device: String::new(),
             channel: 0,
             taken_at: String::new(),
+            source: CalibrationSource::Calibrator,
         }
     }
 

@@ -9,7 +9,7 @@ Command reference. For the model, the invariants and the traps, read
 npm install
 npm run app          # tauri dev
 npm run app:build    # bundle (.dmg / .msi / .AppImage)
-npm test             # vitest — 36 tests
+npm test             # vitest — 40 tests
 npm run typecheck    # tsc -b
 npm run lint         # oxlint
 ```
@@ -53,6 +53,10 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
   been tried, measured and rejected; the numbers are in the comments.
 - Spectrum normalisation is `2/(N·S2)` and a full-scale sine reads **0 dBFS**.
 - **Never present an uncalibrated level as dB SPL.** Every readout states its unit.
+- **An offset carries its provenance.** Only a hardware calibrator run may be called
+  "calibrated" unqualified; a platform guarantee (Android unprocessed = 130 dB) or a
+  per-model profile is shown with its source attached. A user calibration always wins.
+  Never infer a profile from `target_os` — see AGENTS.md §4.4 and §4.4c.
 - The frontend renders; it does not calculate. No band tables or decibels in `src/`.
 - **Never draw a transfer function without coherence.** The magnitude trace breaks below
   the floor; points fade in proportion. Coherence before four averages is meaningless.
