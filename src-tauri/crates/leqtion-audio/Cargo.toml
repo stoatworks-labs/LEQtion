@@ -17,6 +17,13 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
 
+# Configuring the AVAudioSession before capture. iOS refuses to open an input
+# until a record-capable category is active, and cpal does not set one. See
+# session.rs. Pinned to the same objc2-avf-audio major that cpal itself uses,
+# so both see one version of the framework bindings.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-avf-audio = { version = "0.3", features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
+
 [features]
 # Windows ASIO. Off by default because it cannot be built without the Steinberg
 # SDK, which is not redistributable — see docs/asio.md.

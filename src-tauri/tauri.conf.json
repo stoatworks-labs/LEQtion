@@ -23,12 +23,18 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self' tauri:; script-src 'self' tauri:; style-src 'self' tauri: 'unsafe-inline'; img-src 'self' tauri: data:; connect-src 'self' tauri: ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis", "deb", "rpm"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "deb",
+      "rpm"
+    ],
     "category": "Utility",
     "shortDescription": "Sound level meter and real-time analyser",
     "longDescription": "RTA, spectrograph, bargraph, time-weighted SPL and user-defined LEQ, on a configurable grid of tiles. Calibrates against a hardware acoustic calibrator.",
@@ -41,6 +47,16 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "iOS": {
+      "frameworks": [
+        "AVFoundation",
+        "AudioToolbox",
+        "CoreAudio"
+      ]
+    },
+    "android": {
+      "minSdkVersion": 26
     }
   }
 }

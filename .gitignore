@@ -36,3 +36,18 @@ src-tauri/gen/schemas/
 # Release artefacts. Built by scripts/release-local.sh and attached to the
 # GitHub release; they do not belong in the history.
 dist-release/
+
+# The generated iOS project. `tauri ios init` recreates it in full and nothing
+# in it is hand written -- persistent plist keys live in src-tauri/Info.plist,
+# which Tauri merges.
+src-tauri/gen/apple/
+
+# gen/android/ is deliberately NOT ignored. Tauri has no configuration field
+# for Android permissions, so RECORD_AUDIO can only be declared by editing the
+# generated AndroidManifest.xml -- and a meter that cannot open the microphone
+# is the entire app. Tauri ships its own .gitignore files inside the directory
+# that exclude the build output, jniLibs and local.properties, which is why
+# tracking it costs about forty small files rather than a Gradle tree.
+#
+# `tauri android init` overwrites the manifest. If you ever re-run it, put
+# RECORD_AUDIO back.

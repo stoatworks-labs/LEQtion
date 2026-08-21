@@ -35,6 +35,7 @@
 //! places in the codebase that know it is not real.
 
 pub mod profiles;
+pub mod session;
 pub mod synthetic;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -326,6 +327,11 @@ pub fn open(opts: CaptureOptions) -> Result<(Capture, rtrb::Consumer<f32>)> {
     if synthetic::is_host(opts.host.as_deref()) {
         return synthetic::open(opts);
     }
+
+    // iOS will not open an input until an audio session permitting it is
+    // active, and the mode set here is what keeps AGC out of the measurement.
+    // A no-op everywhere else. See `session`.
+    session::prepare_for_measurement().map_err(AudioError::Backend)?;
 
     let host = find_host(opts.host.as_deref())?;
     let host_name = host_id_name(&host.id());
@@ -701,6 +707,10 @@ pub fn open_output<F>(opts: OutputOptions, mut fill: F) -> Result<Output>
 where
     F: FnMut(&mut [f32], usize) + Send + 'static,
 {
+    // The generator plays out while an input is open, which is why the session
+    // category is playAndRecord rather than record. A no-op off iOS.
+    session::prepare_for_measurement().map_err(AudioError::Backend)?;
+
     let host = find_host(opts.host.as_deref())?;
     let host_name = host_id_name(&host.id());
 
