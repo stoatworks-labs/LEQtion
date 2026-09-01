@@ -397,15 +397,11 @@ impl SpectrumAnalyser {
     /// Restart the average without touching the sample history.
     pub fn reset_average(&mut self) {
         self.frames = 0;
-        for v in &mut self.averaged {
-            *v = 0.0;
-        }
+        self.averaged.fill(0.0);
     }
 
     pub fn reset_peaks(&mut self) {
-        for v in &mut self.peaks_db {
-            *v = f32::NEG_INFINITY;
-        }
+        self.peaks_db.fill(f32::NEG_INFINITY);
     }
 }
 
