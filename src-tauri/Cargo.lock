@@ -2033,7 +2033,7 @@ dependencies = [
  "diag",
  "leqtion-audio",
  "leqtion-dsp",
- "rtrb 0.4.0",
+ "rtrb",
  "serde",
  "serde_json",
  "tauri",
@@ -2049,7 +2049,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "leqtion-dsp",
- "rtrb 0.3.4",
+ "rtrb",
  "serde",
  "thiserror 2.0.20",
  "tracing",
@@ -3093,12 +3093,6 @@ dependencies = [
  "wasm-streams",
  "web-sys",
 ]
-
-[[package]]
-name = "rtrb"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ade083ccbb4bf536df69d1f6432cc23deb7acccff86b183f3923a6fd56a1153"
 
 [[package]]
 name = "rtrb"

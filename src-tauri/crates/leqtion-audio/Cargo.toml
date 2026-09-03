@@ -12,7 +12,7 @@ leqtion-dsp = { path = "../leqtion-dsp" }
 cpal = "0.18"
 # Lock-free SPSC ring. The audio callback must not allocate, block or take a
 # lock, so it cannot touch the engine directly — it pushes here instead.
-rtrb = "0.3"
+rtrb = "0.4"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
