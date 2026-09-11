@@ -213,17 +213,17 @@ input and output are one device — any Dante card, any USB interface — has no
 
 ## Download
 
-**[v0.1.1](https://github.com/stoatworks-labs/LEQtion/releases/tag/v0.1.1)** — prebuilt for macOS. Pick your platform:
+**[v0.1.2](https://github.com/stoatworks-labs/LEQtion/releases/tag/v0.1.2)** — prebuilt for macOS. Pick your platform:
 
 <details>
 <summary><b>macOS</b> — Apple Silicon, Intel</summary>
 
 | Build | Download | Size |
 | --- | --- | --- |
-| Apple Silicon · .dmg disk image | [`leqtion-0.1.1-macos-aarch64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.1/leqtion-0.1.1-macos-aarch64.dmg) | 3.7 MB |
-| Intel · .dmg disk image | [`leqtion-0.1.1-macos-x86_64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.1/leqtion-0.1.1-macos-x86_64.dmg) | 4.2 MB |
-| Apple Silicon · .zip archive | [`leqtion-0.1.1-macos-aarch64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.1/leqtion-0.1.1-macos-aarch64.zip) | 3.7 MB |
-| Intel · .zip archive | [`leqtion-0.1.1-macos-x86_64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.1/leqtion-0.1.1-macos-x86_64.zip) | 4.2 MB |
+| Apple Silicon · .dmg disk image | [`leqtion-0.1.2-macos-aarch64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.2/leqtion-0.1.2-macos-aarch64.dmg) | 3.7 MB |
+| Intel · .dmg disk image | [`leqtion-0.1.2-macos-x86_64.dmg`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.2/leqtion-0.1.2-macos-x86_64.dmg) | 4.2 MB |
+| Apple Silicon · .zip archive | [`leqtion-0.1.2-macos-aarch64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.2/leqtion-0.1.2-macos-aarch64.zip) | 3.7 MB |
+| Intel · .zip archive | [`leqtion-0.1.2-macos-x86_64.zip`](https://github.com/stoatworks-labs/LEQtion/releases/download/v0.1.2/leqtion-0.1.2-macos-x86_64.zip) | 4.2 MB |
 
 </details>
 
