@@ -146,6 +146,18 @@ export interface Calibration {
   source: CalibrationSource;
 }
 
+/** `leqtion_dsp::spectrum::PeakBand` — the tallest band on the RTA. */
+export interface PeakBand {
+  /** Index into `BandPlan.bands`; the level is `Frame.bandsDb[index]`. */
+  index: number;
+  /**
+   * Where the peak actually is, Hz. The band's centre, unless a distinct
+   * spectral maximum is what makes the band the tallest, in which case that
+   * maximum, interpolated between bins.
+   */
+  hz: number;
+}
+
 /** `leqtion_dsp::engine::Frame` */
 export interface Frame {
   sampleRate: number;
@@ -157,6 +169,7 @@ export interface Frame {
   leqs: LeqReading[];
   timeWeighting: TimeWeighting;
   dominantHz: number | null;
+  peakBand: PeakBand | null;
   inputPeakDbfs: number;
   clipped: boolean;
   /**

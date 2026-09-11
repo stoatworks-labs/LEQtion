@@ -106,6 +106,24 @@ impl SpectrumConfig {
     }
 }
 
+/// The tallest band on the RTA, and the frequency behind it.
+///
+/// What the peak readout shows. It names the bar the eye picks out as tallest
+/// — so it can never disagree with the display — and, when a distinct peak in
+/// the spectrum is what makes that bar the tallest, gives the peak's frequency
+/// to a fraction of a bin rather than the band's centre, which at 1/3 octave is
+/// a quarter of an octave wide. See [`SpectrumAnalyser::peak_band`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeakBand {
+    /// Index into [`BandPlan::bands`]; the level is `bands_db[index]`.
+    pub index: usize,
+    /// Where the peak actually is, Hz. The band's centre, unless a distinct
+    /// spectral maximum — a tone, a ring, a hum — is what makes the band the
+    /// tallest, in which case that maximum, interpolated between bins.
+    pub hz: f64,
+}
+
 pub struct SpectrumAnalyser {
     config: SpectrumConfig,
     sample_rate: f64,
@@ -123,12 +141,18 @@ pub struct SpectrumAnalyser {
     scratch_time: Vec<f64>,
     scratch_freq: Vec<Complex<f64>>,
     power: Vec<f64>,
+    /// `power`, averaged exactly as the bands are. The peak readout is refined
+    /// between bins from this rather than from the latest transform, so it
+    /// settles at the rate the display does instead of jittering on noise. One
+    /// pass over the bins per transform, which is nothing next to the transform.
+    averaged_power: Vec<f64>,
 
     band_power: Vec<f64>,
     averaged: Vec<f64>,
     peaks_db: Vec<f32>,
     bands_db: Vec<f32>,
     dominant_hz: Option<f64>,
+    peak_band: Option<PeakBand>,
     frames: u64,
     /// Total transforms run since construction — the UI shows it so a very long
     /// transform at a low overlap does not look like a hung display.
@@ -155,11 +179,13 @@ impl SpectrumAnalyser {
             scratch_time: vec![0.0; config.fft_size],
             scratch_freq,
             power: vec![0.0; bins],
+            averaged_power: vec![0.0; bins],
             band_power: vec![0.0; n_bands],
             averaged: vec![0.0; n_bands],
             peaks_db: vec![f32::NEG_INFINITY; n_bands],
             bands_db: vec![-200.0; n_bands],
             dominant_hz: None,
+            peak_band: None,
             frames: 0,
             transforms: 0,
             config,
@@ -206,6 +232,28 @@ impl SpectrumAnalyser {
     /// one.
     pub fn dominant_hz(&self) -> Option<f64> {
         self.dominant_hz
+    }
+
+    /// The tallest band of the averaged display, with its frequency refined.
+    ///
+    /// `None` until a transform has run, and on silence. Unlike
+    /// [`dominant_hz`](Self::dominant_hz), which reads the latest transform so
+    /// the calibration workflow reacts to the tone that is there *now*, this is
+    /// a reading of the same average the bars are drawn from, so it settles at
+    /// the rate the display does and never names a bar the RTA is not showing
+    /// as tallest.
+    ///
+    /// The frequency is refined between bins only when the averaged spectrum's
+    /// strongest bin lies inside the tallest band — a tone is what makes its
+    /// band the tallest, so its lobe's maximum sits inside the band's edges.
+    /// Anywhere else it is a different thing: on pink noise the strongest bin
+    /// sits at the bottom of the range whichever band is tallest, and quoting
+    /// it would name a place the display shows nothing special. The band is
+    /// widened by a bin on each side for the unresolved region, where a band is
+    /// narrower than the bins and a whole-bin quantisation decides which of
+    /// several bands sharing one measurement comes out tallest.
+    pub fn peak_band(&self) -> Option<PeakBand> {
+        self.peak_band
     }
 
     /// Seconds between transforms at the current settings.
@@ -306,31 +354,28 @@ impl SpectrumAnalyser {
         }
 
         integrate_bands(&self.plan, &self.power, &mut self.band_power);
-        self.dominant_hz = self.find_dominant();
+        self.dominant_hz = self.find_dominant(&self.power);
 
         self.frames += 1;
         self.transforms += 1;
 
-        match self.config.averaging.tau() {
-            None => {
-                // Linear running mean: each frame carries 1/n of the answer.
-                let inv = 1.0 / self.frames as f64;
-                for (avg, &p) in self.averaged.iter_mut().zip(self.band_power.iter()) {
-                    *avg += (p - *avg) * inv;
-                }
+        let alpha = match self.config.averaging.tau() {
+            // Linear running mean: each frame carries 1/n of the answer.
+            None => 1.0 / self.frames as f64,
+            Some(_) if self.frames == 1 => {
+                // Seed with the first frame rather than ramping up from
+                // silence, which otherwise reads 20 dB low for a second.
+                1.0
             }
-            Some(tau) => {
-                let alpha = if self.frames == 1 {
-                    // Seed with the first frame rather than ramping up from
-                    // silence, which otherwise reads 20 dB low for a second.
-                    1.0
-                } else {
-                    1.0 - (-self.hop_seconds() / tau).exp()
-                };
-                for (avg, &p) in self.averaged.iter_mut().zip(self.band_power.iter()) {
-                    *avg += (p - *avg) * alpha;
-                }
-            }
+            Some(tau) => 1.0 - (-self.hop_seconds() / tau).exp(),
+        };
+        for (avg, &p) in self.averaged.iter_mut().zip(self.band_power.iter()) {
+            *avg += (p - *avg) * alpha;
+        }
+        // The bins too, with the same weight, so the peak readout is a reading
+        // of the same average the bars are.
+        for (avg, &p) in self.averaged_power.iter_mut().zip(self.power.iter()) {
+            *avg += (p - *avg) * alpha;
         }
 
         for i in 0..self.averaged.len() {
@@ -340,15 +385,42 @@ impl SpectrumAnalyser {
                 self.peaks_db[i] = db;
             }
         }
+
+        self.peak_band = self.find_peak_band();
     }
 
-    /// Locate the strongest spectral component, interpolated.
+    /// Name the tallest averaged band, and where within it the peak sits.
+    /// See [`peak_band`](Self::peak_band) for what is accepted and why.
+    fn find_peak_band(&self) -> Option<PeakBand> {
+        let bands = &self.plan.bands;
+        let mut best = 0;
+        for i in 1..self.averaged.len() {
+            if self.averaged[i] > self.averaged[best] {
+                best = i;
+            }
+        }
+        let b = bands.get(best)?;
+        // Nothing worth naming.
+        if self.averaged[best] <= 1e-24 {
+            return None;
+        }
+
+        let bin_hz = self.plan.bin_hz;
+        let hz = match self.find_dominant(&self.averaged_power) {
+            Some(fine) if fine >= b.flo - bin_hz && fine <= b.fhi + bin_hz => fine,
+            _ => b.fc,
+        };
+        Some(PeakBand { index: best, hz })
+    }
+
+    /// Locate the strongest spectral component of a bin power spectrum,
+    /// interpolated.
     ///
     /// DC and the first bin are skipped: a converter with any DC offset puts a
     /// large value in bin 0, and reporting "0 Hz" as the dominant tone would be
     /// both useless and, during calibration, actively misleading.
-    fn find_dominant(&self) -> Option<f64> {
-        let last = self.power.len().saturating_sub(1);
+    fn find_dominant(&self, power: &[f64]) -> Option<f64> {
+        let last = power.len().saturating_sub(1);
         if last < 4 {
             return None;
         }
@@ -364,12 +436,12 @@ impl SpectrumAnalyser {
 
         let mut best = first;
         for k in first..last {
-            if self.power[k] > self.power[best] {
+            if power[k] > power[best] {
                 best = k;
             }
         }
         // Nothing worth naming.
-        if self.power[best] <= 1e-24 {
+        if power[best] <= 1e-24 {
             return None;
         }
 
@@ -378,9 +450,9 @@ impl SpectrumAnalyser {
         // windowed sinusoid is closer to a parabola in dB than in linear power,
         // which is what makes this accurate to a small fraction of a bin.
         let hz = if best > 0 && best < last {
-            let l = self.power[best - 1].max(1e-30).ln();
-            let c = self.power[best].max(1e-30).ln();
-            let r = self.power[best + 1].max(1e-30).ln();
+            let l = power[best - 1].max(1e-30).ln();
+            let c = power[best].max(1e-30).ln();
+            let r = power[best + 1].max(1e-30).ln();
             let denom = l - 2.0 * c + r;
             let delta = if denom.abs() < 1e-18 {
                 0.0
@@ -400,6 +472,7 @@ impl SpectrumAnalyser {
         for v in &mut self.averaged {
             *v = 0.0;
         }
+        self.averaged_power.fill(0.0);
     }
 
     pub fn reset_peaks(&mut self) {
@@ -605,6 +678,96 @@ mod tests {
             (got - 1000.0).abs() < 5.0,
             "DC offset dragged the dominant frequency to {got:.1} Hz"
         );
+    }
+
+    /// At 1/3 octave the 1 kHz band runs 891–1122 Hz; a readout that could only
+    /// say "1k" would be a quarter of an octave coarse. The refined frequency
+    /// must still belong to the band the bar is drawn for.
+    #[test]
+    fn peak_band_names_a_tone_precisely_from_inside_the_band_it_tops() {
+        let rate = 48000.0;
+        for fraction in [Fraction::Third, Fraction::Twelfth, Fraction::FortyEighth] {
+            let mut a = SpectrumAnalyser::new(config(fraction, 16384), rate);
+            a.push(&sine(rate, 997.0, 0.5, 16384 * 4));
+            let peak = a.peak_band().expect("a tone should top a band");
+            let b = &a.plan().bands[peak.index];
+            assert!(
+                b.flo <= 997.0 && b.fhi >= 997.0,
+                "{}: peak band {} does not contain the tone",
+                fraction.label(),
+                b.label
+            );
+            assert!(
+                (peak.hz - 997.0).abs() < 1.0,
+                "{}: tone located at {:.2} Hz",
+                fraction.label(),
+                peak.hz
+            );
+            assert_eq!(
+                a.bands_db()[peak.index],
+                *a.bands_db().iter().max_by(|x, y| x.total_cmp(y)).unwrap(),
+                "the peak band is the tallest bar"
+            );
+        }
+    }
+
+    /// 60 Hz at 1/48 octave: the band is 0.87 Hz wide against 2.93 Hz bins, so
+    /// several bands share one bin's measurement and the tallest is whichever
+    /// the integration hands the biggest share. The readout must not be pinned
+    /// to that band's centre — the interpolated peak is the better answer, and
+    /// it lies within a bin of it.
+    #[test]
+    fn peak_band_still_locates_a_tone_where_bands_are_narrower_than_bins() {
+        let rate = 48000.0;
+        let mut a = SpectrumAnalyser::new(config(Fraction::FortyEighth, 16384), rate);
+        a.push(&sine(rate, 60.0, 0.5, 16384 * 4));
+        let peak = a.peak_band().expect("a tone should top a band");
+        let plan = a.plan();
+        assert!(
+            plan.resolved_above_hz > 60.0,
+            "60 Hz should be unresolved at 1/48"
+        );
+        assert!((plan.bands[peak.index].fc - 60.0).abs() < plan.bin_hz);
+        assert!(
+            (peak.hz - 60.0).abs() < 1.0,
+            "tone located at {:.2} Hz",
+            peak.hz
+        );
+    }
+
+    /// A strong low tone under a wide band of noise-like content. The 8 kHz
+    /// band holds the most power — it is the tallest bar — but the strongest
+    /// single bin is the 50 Hz tone. Quoting 50 Hz against a bar at 8 kHz would
+    /// be naming a place the graph shows nothing special.
+    #[test]
+    fn peak_band_falls_back_to_the_centre_when_the_spectrum_peaks_elsewhere() {
+        let rate = 48000.0;
+        let n = 16384 * 4;
+        let mut x = sine(rate, 50.0, 0.5, n);
+        let mut hz = 7200.0;
+        while hz <= 9200.0 {
+            for (s, t) in x.iter_mut().zip(sine(rate, hz, 0.05, n)) {
+                *s += t;
+            }
+            hz += 10.0;
+        }
+        let mut a = SpectrumAnalyser::new(config(Fraction::Third, 16384), rate);
+        a.push(&x);
+        let peak = a.peak_band().expect("something tops a band");
+        let b = &a.plan().bands[peak.index];
+        assert!((b.fc - 8000.0).abs() < 1e-6, "tallest band was {}", b.label);
+        let fine = a.dominant_hz().unwrap();
+        assert!((fine - 50.0).abs() < 1.0, "strongest bin was {fine:.1} Hz");
+        assert_eq!(peak.hz, b.fc);
+    }
+
+    #[test]
+    fn silence_has_no_peak_band() {
+        let rate = 48000.0;
+        let mut a = SpectrumAnalyser::new(config(Fraction::Twelfth, 4096), rate);
+        assert_eq!(a.peak_band(), None, "nothing before the first transform");
+        a.push(&vec![0.0f32; 4096 * 2]);
+        assert_eq!(a.peak_band(), None);
     }
 
     #[test]

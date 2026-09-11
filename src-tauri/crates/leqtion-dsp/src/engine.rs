@@ -21,7 +21,7 @@ use crate::bands::BandPlan;
 use crate::calibration::{Calibration, CalibrationRun, CalibrationSample, CalibrationStatus, CalibrationTarget};
 use crate::history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
 use crate::leq::{LeqAccumulator, LeqReading, LeqSpec};
-use crate::spectrum::{SpectrumAnalyser, SpectrumConfig};
+use crate::spectrum::{PeakBand, SpectrumAnalyser, SpectrumConfig};
 use crate::spl::{
     amplitude_to_dbfs, mean_square_to_dbfs, LevelDetector, MinMax, PeakTracker, TimeWeighting,
     SILENCE_DBFS,
@@ -243,9 +243,14 @@ pub struct Frame {
     pub leqs: Vec<LeqReading>,
     /// Time weighting in force for `spl`.
     pub time_weighting: TimeWeighting,
-    /// Strongest frequency component, Hz. Useful on its own, and what the
-    /// calibration screen checks the calibrator against.
+    /// Strongest frequency component of the latest transform, Hz. Useful on
+    /// its own, and what the calibration screen checks the calibrator against.
     pub dominant_hz: Option<f64>,
+    /// The tallest band in `bands_db`, with the frequency behind it — the
+    /// peak readout across the top of the RTA. Read from the same average as
+    /// the bars, so it never names a bar the display is not showing as
+    /// tallest. Its level is `bands_db[index]`.
+    pub peak_band: Option<PeakBand>,
     /// Unweighted sample peak of the raw input, always in dBFS regardless of
     /// calibration — this is a converter headroom figure, not a sound level.
     pub input_peak_dbfs: f64,
@@ -560,6 +565,7 @@ impl Engine {
             leqs,
             time_weighting: self.config.time_weighting,
             dominant_hz: self.spectrum.dominant_hz(),
+            peak_band: self.spectrum.peak_band(),
             input_peak_dbfs: amplitude_to_dbfs(self.input_peak.peak()),
             clipped: self.input_peak.clipped(),
             input_silent_seconds: self.silent,

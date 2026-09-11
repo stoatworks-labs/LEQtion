@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeWindow, formatElapsed, formatLevel, levelName, NO_READING } from './format';
+import { describeWindow, formatElapsed, formatHz, formatLevel, levelName, NO_READING } from './format';
 
 describe('levelName', () => {
   /**
@@ -60,5 +60,22 @@ describe('formatElapsed', () => {
 
   it('never shows a negative time', () => {
     expect(formatElapsed(-5)).toBe('0:00');
+  });
+});
+
+describe('formatHz', () => {
+  it('reads to three significant figures with the unit chosen after rounding', () => {
+    expect(formatHz(63.24)).toBe('63.2 Hz');
+    expect(formatHz(997.3)).toBe('997 Hz');
+    expect(formatHz(999.6)).toBe('1.00 kHz');
+    expect(formatHz(2468)).toBe('2.47 kHz');
+    expect(formatHz(12480)).toBe('12.5 kHz');
+    expect(formatHz(19.686)).toBe('19.7 Hz');
+  });
+
+  it('shows a placeholder when there is nothing to name', () => {
+    expect(formatHz(null)).toBe('—');
+    expect(formatHz(undefined)).toBe('—');
+    expect(formatHz(Number.NaN)).toBe('—');
   });
 });

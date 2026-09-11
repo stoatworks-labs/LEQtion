@@ -23,6 +23,18 @@ export function formatLevel(v: number | undefined | null): string {
   return v.toFixed(1);
 }
 
+/**
+ * A frequency readout to three significant figures, with its unit: "63.2 Hz",
+ * "997 Hz", "2.47 kHz", "12.5 kHz". Rounded before the unit is chosen, so
+ * 999.6 Hz reads "1.00 kHz" rather than "1000 Hz".
+ */
+export function formatHz(hz: number | undefined | null): string {
+  if (hz == null || !Number.isFinite(hz) || hz <= 0) return '—';
+  const v = Number(hz.toPrecision(3));
+  if (v >= 1000) return `${(v / 1000).toPrecision(3)} kHz`;
+  return `${v.toPrecision(3)} Hz`;
+}
+
 /** Drop a trailing `.0`, and never show more than two decimals. */
 function trim(v: number): string {
   return Number.isInteger(v) ? String(v) : String(+v.toFixed(2));
