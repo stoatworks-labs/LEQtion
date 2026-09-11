@@ -245,36 +245,58 @@ pub fn build_band_plan(
 
 /// Integrate the bin power spectrum into band powers.
 ///
-/// Two paths, and the difference is the whole reason this function exists:
+/// Each bin's power is taken to occupy its own cell, the `bin_hz` of spectrum
+/// centred on it, and a band receives every cell it covers in proportion to
+/// how much of the cell it covers. With the S2 normalisation used in
+/// [`crate::spectrum`] a bin's power *is* the power in its cell — for noise,
+/// PSD × `bin_hz` — so this is the plain integral of the spectrum over the
+/// band: unbiased for a band many bins wide, exactly proportional to width
+/// for a flat spectrum at any width, and continuous through the resolution
+/// limit. No ENBW enters: that number says how *wide* a tone is smeared, not
+/// how much power a cell holds, and it belongs in
+/// [`BandPlan::resolved_above_hz`], which is where it is.
 ///
-/// - The band spans one or more bins → sum them. With the S2 normalisation used
-///   in [`crate::spectrum`], summing bin powers over a range is an unbiased
-///   estimate of the power in that range, so no ENBW correction applies.
-/// - The band is narrower than the bin spacing and lands between bins → there
-///   is nothing to sum. Interpolate the power *density* at the centre frequency
-///   and multiply by the band width. Here the ENBW correction does apply,
-///   because a single bin's power occupies `enbw · bin_hz` of spectrum, not
-///   `bin_hz`.
+/// One path, deliberately. The previous version had two — sum the bins a
+/// band contained, or, if it contained none, interpolate a density — and the
+/// choice between them depended on whether a bin *centre* happened to fall
+/// inside the band, which says nothing about the signal. At 1/48 octave with
+/// a 2048-point transform a 1.4 Hz band at 100 Hz was credited with a whole
+/// 23 Hz bin whenever a centre landed in it, and the display grew a comb of
+/// bands 7–14 dB above their neighbours at every multiple of the bin spacing.
+/// Whole-bin counting had a milder cousin above the limit, where a band 1.5
+/// bins wide held one bin or two by luck of alignment. Fractional coverage
+/// has neither, and `a_flat_spectrum_has_no_comb_at_the_bin_spacing` keeps
+/// it that way.
 ///
-/// The second path is a display convenience, not a measurement: it cannot
-/// resolve detail the transform never captured. [`BandPlan::resolved_above_hz`]
-/// marks where it takes over, and the UI shades that region.
+/// Below [`BandPlan::resolved_above_hz`] the result is still a display
+/// convenience rather than a measurement: a band narrower than the window's
+/// main lobe shows the slice of that lobe it covers, not the power of a tone
+/// the transform could not resolve. The UI shades that region for the reason.
 pub fn integrate_bands(plan: &BandPlan, power: &[f64], out: &mut [f64]) {
     debug_assert_eq!(out.len(), plan.bands.len());
-    let last_bin = power.len().saturating_sub(1);
+    if power.is_empty() {
+        out.iter_mut().for_each(|v| *v = 0.0);
+        return;
+    }
+    let last_bin = power.len() - 1;
+    let bin_hz = plan.bin_hz;
 
     for (i, b) in plan.bands.iter().enumerate() {
-        if b.bin_lo <= b.bin_hi && b.bin_lo < power.len() {
-            let hi = b.bin_hi.min(last_bin);
-            out[i] = power[b.bin_lo..=hi].iter().sum();
-        } else {
-            let x = b.fc / plan.bin_hz;
-            let k0 = (x.floor() as usize).min(last_bin.saturating_sub(1));
-            let t = (x - k0 as f64).clamp(0.0, 1.0);
-            let p = (1.0 - t) * power[k0] + t * power[k0 + 1];
-            let density = p / (plan.enbw * plan.bin_hz);
-            out[i] = density * (b.fhi - b.flo);
+        // Cells are [(k − ½)·bin_hz, (k + ½)·bin_hz]; these are the first and
+        // last cells the band touches.
+        let k_first = ((b.flo / bin_hz + 0.5).floor().max(0.0) as usize).min(last_bin);
+        let k_last = ((b.fhi / bin_hz + 0.5).floor().max(0.0) as usize).min(last_bin);
+        let mut acc = 0.0;
+        for (k, p) in power[k_first..=k_last].iter().enumerate() {
+            let k = (k_first + k) as f64;
+            let cell_lo = (k - 0.5) * bin_hz;
+            let cell_hi = (k + 0.5) * bin_hz;
+            let overlap = b.fhi.min(cell_hi) - b.flo.max(cell_lo);
+            if overlap > 0.0 {
+                acc += p * (overlap / bin_hz);
+            }
         }
+        out[i] = acc;
     }
 }
 
@@ -388,19 +410,15 @@ mod tests {
         let mut out = vec![0.0f64; plan.bands.len()];
         integrate_bands(&plan, &power, &mut out);
 
-        // Only where a band spans enough bins for the whole-bin rounding at its
-        // edges to be a small fraction of its width. A six-bin band can be half
-        // a bin out at each edge, which is 0.7 dB — a real quantisation of the
-        // band edges, not an error in the integration.
+        // Every band, whatever its width. This used to skip anything under
+        // twenty bins wide because whole-bin counting could be half a bin out
+        // at each edge; fractional coverage has no such quantisation, so the
+        // proportionality is exact and the gate would only hide a regression.
         for (i, b) in plan.bands.iter().enumerate() {
-            let width_bins = (b.fhi - b.flo) / plan.bin_hz;
-            if width_bins < 20.0 || b.fc > 15000.0 {
-                continue;
-            }
-            let expected = width_bins;
+            let expected = (b.fhi - b.flo) / plan.bin_hz;
             let err = (out[i] / expected).log10() * 10.0;
             assert!(
-                err.abs() < 0.5,
+                err.abs() < 0.01,
                 "band {} off by {err:.2} dB (got {}, expected {expected})",
                 b.label,
                 out[i]
@@ -427,5 +445,88 @@ mod tests {
         let mut out = vec![0.0f64; plan.bands.len()];
         integrate_bands(&plan, &power, &mut out);
         assert!(out.iter().all(|v| v.is_finite() && *v >= 0.0));
+    }
+
+    /// The comb seen on real input on 2026-09-11: at 1/48 octave with a
+    /// 2048-point transform, every band that happened to contain a bin centre
+    /// sat 7–14 dB above its neighbours, at multiples of the 23.4 Hz bin
+    /// spacing, all the way up to the resolution limit. Whether a bin centre
+    /// falls inside a band says nothing about the spectrum, so on a flat
+    /// spectrum every band must be proportional to its width — below the
+    /// resolution limit as well as above it — and no band may stand out from
+    /// the ones beside it by more than the width ratio explains.
+    #[test]
+    fn a_flat_spectrum_has_no_comb_at_the_bin_spacing() {
+        let plan = build_band_plan(Fraction::FortyEighth, 2048, 48000.0, 1.5);
+        let bins = plan.fft_size / 2 + 1;
+        let power = vec![1.0f64; bins];
+        let mut out = vec![0.0f64; plan.bands.len()];
+        integrate_bands(&plan, &power, &mut out);
+
+        for (i, b) in plan.bands.iter().enumerate() {
+            let expected = (b.fhi - b.flo) / plan.bin_hz;
+            let err = (out[i] / expected).log10() * 10.0;
+            assert!(
+                err.abs() < 0.01,
+                "band {} ({:.1} Hz) off by {err:.2} dB (got {}, expected {expected})",
+                b.label,
+                b.fc,
+                out[i]
+            );
+        }
+        for w in plan.bands.windows(2).zip(out.windows(2)) {
+            let (bands, levels) = w;
+            let step = (levels[1] / levels[0]).log10() * 10.0;
+            let width_ratio = ((bands[1].fhi - bands[1].flo) / (bands[0].fhi - bands[0].flo)).log10() * 10.0;
+            assert!(
+                (step - width_ratio).abs() < 0.01,
+                "{} -> {} steps {step:.2} dB where the widths explain {width_ratio:.2} dB",
+                bands[0].label,
+                bands[1].label
+            );
+        }
+    }
+
+    /// Integer bin counting has a second artefact just above the resolution
+    /// limit: a band 1.5 bins wide holds one bin or two depending on where its
+    /// edges fall, a 3 dB sawtooth on a flat spectrum. Fractional coverage
+    /// removes it, at every width.
+    #[test]
+    fn bands_a_few_bins_wide_do_not_alternate() {
+        let plan = build_band_plan(Fraction::Twelfth, 4096, 48000.0, 1.5);
+        let bins = plan.fft_size / 2 + 1;
+        let power = vec![1.0f64; bins];
+        let mut out = vec![0.0f64; plan.bands.len()];
+        integrate_bands(&plan, &power, &mut out);
+        for (i, b) in plan.bands.iter().enumerate() {
+            let width_bins = (b.fhi - b.flo) / plan.bin_hz;
+            if !(1.0..=4.0).contains(&width_bins) {
+                continue;
+            }
+            let err = (out[i] / width_bins).log10() * 10.0;
+            assert!(err.abs() < 0.01, "band {} ({width_bins:.2} bins) off by {err:.2} dB", b.label);
+        }
+    }
+
+    /// A tone's power must not depend on where the band edges fall relative
+    /// to the bins that carry it: summed across the bands that cover its main
+    /// lobe it is the tone's mean square, whether one band holds the lobe or
+    /// three share it. This is what the S2 normalisation promises, and
+    /// fractional coverage must keep the promise — every bin's power is
+    /// handed out exactly once.
+    #[test]
+    fn bin_power_is_conserved_across_band_edges() {
+        let plan = build_band_plan(Fraction::Third, 8192, 48000.0, 1.5);
+        let bins = plan.fft_size / 2 + 1;
+        let mut power = vec![0.0f64; bins];
+        // A Hann main lobe centred between two bins, straddling a band edge.
+        let edge_bin = (plan.bands[10].fhi / plan.bin_hz).round() as usize;
+        power[edge_bin - 1] = 0.25;
+        power[edge_bin] = 0.5;
+        power[edge_bin + 1] = 0.25;
+        let mut out = vec![0.0f64; plan.bands.len()];
+        integrate_bands(&plan, &power, &mut out);
+        let total: f64 = out.iter().sum();
+        assert!((total - 1.0).abs() < 1e-9, "lobe power {total} != 1.0");
     }
 }

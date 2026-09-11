@@ -265,6 +265,18 @@ default otherwise — and sets `clock_shared` accordingly. Two devices means two
 the internal reference drifts; the UI says so. On any real interface both sides share a
 name and the fast path applies. `capture --list` prints both lists.
 
+**Whether a bin centre falls inside a band says nothing about the signal.** `integrate_bands`
+once had two paths — sum the bins a band contained, or interpolate a density if it contained
+none — and at 1/48 octave with a 2048-point transform that put a comb on the RTA: every band
+that happened to hold a bin centre stood 7–14 dB above its neighbours, at every multiple of
+the 23.4 Hz bin spacing, up to the resolution limit (seen on real input 2026-09-11; simpleRTA,
+which spreads each bin over its own width, showed nothing). Bands now take the fractional
+overlap of every bin cell they cover, one path at every width, and
+`a_flat_spectrum_has_no_comb_at_the_bin_spacing` fails if a step between neighbouring bands
+is not explained by their widths. ENBW does not belong in that integral — under the
+`2/(N·S2)` normalisation a bin's power already *is* the power in its `bin_hz` cell — it
+belongs only in `resolved_above_hz`, which is about how wide a tone is smeared.
+
 **The pink normalisation constant is measured, not derived.** `PINK_NORMALISATION` is the
 reciprocal of the pinking filter's RMS gain, measured over four million samples. It does not
 depend on the sample rate. If pink noise comes out at the wrong level, this is the number.
