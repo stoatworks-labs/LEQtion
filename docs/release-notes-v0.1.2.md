@@ -5,6 +5,12 @@
   silent refusal — no prompt, no error, and no LEQtion row under Privacy & Security →
   Microphone to switch on by hand. Every input, from the built-in microphone to Dante
   Virtual Soundcard, metered exactly digital silence. Update, launch, click Allow.
+- **The RTA no longer grows a comb below its resolution limit.** At fine resolutions with
+  a small transform — 1/48 octave at 2048 points, say — bands that happened to sit on an
+  FFT bin centre read 7–14 dB above their neighbours, at every multiple of the bin spacing.
+  Bands now integrate the fraction of each bin they actually cover, so a flat spectrum
+  reads flat at every width and the shaded "interpolated" region joins the measured one
+  without a step.
 - Fixed the field casing between the engine and the window that emptied the whole
   window when the Analysis panel was opened, broke the Sweep signal, and would have
   taken the app down at the moment a calibration was about to succeed. A display fault
