@@ -84,6 +84,30 @@ npm install --silent --no-audit --no-fund >/dev/null
 # ------------------------------------------------------------------ builds ---
 rm -rf "$out"; mkdir -p "$out"
 
+# A signature can be valid, notarised and still wrong. A Developer ID build is
+# hardened (Tauri's default), and a hardened process without the audio-input
+# entitlement is refused the microphone with no prompt and no error: the
+# stream opens, the callback fires, every sample is exactly zero, and the app
+# never appears under Privacy & Security > Microphone because no TCC entry was
+# ever made. v0.1.1 and v0.2.0-beta.1 both shipped like that — Tauri signs the
+# bundle itself once APPLE_SIGNING_IDENTITY is exported, and nothing told it
+# about scripts/mac-entitlements.plist. So the bundle is checked here, where a
+# wrong signature costs a rebuild rather than a release.
+require_mic_entitlement() { # require_mic_entitlement <path-to-.app>
+  local app="$1" desc ent
+  desc="$(codesign -dvv "$app" 2>&1 || true)"
+  rl_grep 'flags=.*runtime' "$desc" || return 0   # not hardened: no entitlement needed
+  ent="$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)"
+  if ! rl_grepF 'com.apple.security.device.audio-input' "$ent"; then
+    echo "$(basename "$app") is hardened but has no audio-input entitlement:" >&2
+    echo "macOS would refuse the microphone without asking. Check that" >&2
+    echo "src-tauri/tauri.conf.json bundle.macOS.entitlements still points at" >&2
+    echo "scripts/mac-entitlements.plist." >&2
+    return 1
+  fi
+  rl_note "hardened runtime with audio-input entitlement"
+}
+
 build_mac() { # build_mac <label> <rust-target>
   local label="$1" target="$2"
   if ! rustup target list --installed | grep -qx "$target"; then
@@ -108,7 +132,13 @@ build_mac() { # build_mac <label> <rust-target>
   # ad-hoc otherwise. Must happen before the app is copied anywhere: the
   # notarisation ticket is stapled into the bundle, and only copies made
   # afterwards carry it.
+  # Checked twice: before, because Tauri has already signed the bundle by now
+  # and rl_adhoc_sign notarises before returning, so a bad signature would
+  # otherwise cost a notarisation before it was noticed; after, because
+  # RL_MAC_FORCE_SIGN=1 replaces the signature.
+  require_mic_entitlement "$app" || return 1
   rl_adhoc_sign "$app"
+  require_mic_entitlement "$app" || return 1
 
   local stage="$out/.stage-$label"
   rm -rf "$stage"; mkdir -p "$stage"

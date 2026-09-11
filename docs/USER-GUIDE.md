@@ -206,7 +206,7 @@ cargo run --example meter -- --seconds 30 --offset 120
 | **Everything reads dBFS** | Not calibrated. That is the design — it will not present a full-scale level as an SPL. |
 | **Calibration refused** | One of the four checks failed, and the message says which. "Unstable" usually means the calibrator isn't seated. |
 | **Calibration option greyed out** | The signal generator backend is open. There is no capsule in the chain. |
-| **Levels arrive at exactly digital silence** | macOS is denying microphone access. Check the `capture` example. |
+| **Levels arrive at exactly digital silence** | macOS is denying microphone access. Since v0.1.2 the app asks on first launch; if you declined, allow it under System Settings → Privacy & Security → Microphone, or run `tccutil reset Microphone com.allansargeant.leqtion` and launch again. v0.1.1 and v0.2.0-beta.1 never asked at all — update. |
 | **LEQ looks short** | Frames were dropped; the device bar will say so. Restart the measurement. |
 | **A-weighted reading disagrees with a real meter at HF** | Expected at 44.1/48 kHz — about 1.1 dB by 10 kHz. Run at 96 kHz. |
 | **Transfer function trace breaks up** | Coherence below the floor. That is the feature, not a fault — the measurement is not trustworthy there. |
