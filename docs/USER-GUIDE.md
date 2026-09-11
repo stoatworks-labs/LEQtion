@@ -44,7 +44,7 @@ Add, remove, drag and resize them; the layout persists.
 
 | Tile | What it shows |
 |---|---|
-| **RTA** | Fractional-octave spectrum, 1/1 down to 1/48, with selectable transform size, window, overlap, averaging and peak hold |
+| **RTA** | Fractional-octave spectrum, 1/1 down to 1/48, with selectable transform size, window, overlap, averaging and peak hold. A strip across the top names the tallest band and its level, refined to a fraction of a bin when a tone is what tops it |
 | **Spectrograph** | The same bands over time, scrolling, on the same log axis as the RTA so the two line up when stacked |
 | **Bargraph** | Level meter with a held maximum, plus a separate input-peak strip that stays in dBFS because headroom is an electrical question |
 | **SPL** | Time-weighted level — Fast, Slow and Impulse — with max, min and peak |

@@ -11,6 +11,10 @@
   Bands now integrate the fraction of each bin they actually cover, so a flat spectrum
   reads flat at every width and the shaded "interpolated" region joins the measured one
   without a step.
+- **A live peak-frequency readout across the top of the RTA.** It names the tallest band
+  and its level, in the same unit as the SPL tile, and refines the frequency to a fraction
+  of a bin when a tone is what tops it — "997 Hz" at 1/3 octave rather than "1k". It reads
+  the same average the bars are drawn from, so it settles as they do.
 - Fixed the field casing between the engine and the window that emptied the whole
   window when the Analysis panel was opened, broke the Sweep signal, and would have
   taken the app down at the moment a calibration was about to succeed. A display fault
