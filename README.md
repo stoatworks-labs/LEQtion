@@ -37,7 +37,8 @@ been used in anger on a show.
 ## What it does
 
 - **RTA** — fractional-octave spectrum from 1/1 down to 1/48, with selectable transform
-  size, window, overlap, averaging and peak hold.
+  size, window, overlap, averaging and peak hold. A strip across the top names the
+  tallest band and its level, refined to a fraction of a bin when a tone is what tops it.
 - **Spectrograph** — the same bands over time, scrolling, on the same log axis as the RTA
   so the two line up when stacked.
 - **Bargraph** — level meter with a held maximum, and a separate input-peak strip that

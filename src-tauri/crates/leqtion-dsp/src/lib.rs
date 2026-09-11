@@ -48,7 +48,7 @@ pub use engine::{ChannelSelect, Engine, EngineConfig, Frame, SplReading};
 pub use generator::{Generator, GeneratorConfig, Signal};
 pub use history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
 pub use leq::{LeqReading, LeqSpec, LeqWindow};
-pub use spectrum::{Averaging, SpectrumAnalyser, SpectrumConfig, FFT_SIZES};
+pub use spectrum::{Averaging, PeakBand, SpectrumAnalyser, SpectrumConfig, FFT_SIZES};
 pub use spl::TimeWeighting;
 pub use transfer::{DelayEstimate, TransferConfig, TransferFunction, TransferPlan, TransferReading};
 pub use weighting::Weighting;

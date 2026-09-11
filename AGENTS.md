@@ -33,7 +33,7 @@ src-tauri/
   src/session.rs             Audio → analysis thread → frame events.
   src/settings.rs            One JSON file, written atomically.
   src/logger.rs              CSV log. The only thing here that writes a file.
-  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 139 tests.
+  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 146 tests.
                                generator.rs  signal sources
                                transfer.rs   multi-time-window TF, coherence, delay
                                history.rs    levels over time, per-interval buckets
@@ -57,13 +57,13 @@ data plotted against them can only be guaranteed to agree if there is one implem
 npm install
 npm run app            # tauri dev
 npm run app:build      # bundle
-npm test               # vitest, 23 tests
+npm test               # vitest, 25 tests
 npm run typecheck      # tsc -b across app/node/test projects
 npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 163 tests
+cd src-tauri && cargo test --workspace     # 171 tests
 ```
 
 ```bash
@@ -171,6 +171,17 @@ noise into a rig before anyone has touched anything.
 
 `plan_revision` on a frame changes when the band table changes. The UI refetches rather than
 building its own. `bands_db.length === plan.bands.length` is checked before drawing.
+
+The peak readout across the top of the RTA follows the same rule: `Frame::peak_band` names
+the tallest band of the *averaged* display and refines its frequency between bins, and the
+tile prints it. It is deliberately a second number alongside `dominant_hz`, which reads the
+latest transform so the calibration workflow reacts to the tone that is there now; the
+readout instead reads the same average the bars are drawn from, so it settles at the rate
+they do and never names a bar the display is not showing as tallest. The fine frequency is
+only accepted inside the tallest band (plus a bin either side, for the unresolved region):
+a tone reads to a fraction of a bin at every resolution, while pink noise reads the centre
+of whichever band is tallest, because the strongest *bin* of a pink spectrum sits at the
+bottom of the range whatever the bars do. `spectrum::tests::peak_band_*` pin all three cases.
 
 ## 5. Traps
 

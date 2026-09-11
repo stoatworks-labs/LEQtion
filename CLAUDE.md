@@ -9,7 +9,7 @@ Command reference. For the model, the invariants and the traps, read
 npm install
 npm run app          # tauri dev
 npm run app:build    # bundle (.dmg / .msi / .AppImage)
-npm test             # vitest — 23 tests
+npm test             # vitest — 25 tests
 npm run typecheck    # tsc -b
 npm run lint         # oxlint
 ```

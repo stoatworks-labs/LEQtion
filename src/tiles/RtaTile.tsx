@@ -1,7 +1,8 @@
 import { useRef } from 'react';
 
+import { formatHz, formatLevel } from '../lib/format';
 import { dbToUnit, dbTicks, fitCanvas, freqTicks, freqToUnit } from '../lib/plot';
-import { useAnimationFrame, useFrameRef } from '../lib/useFrame';
+import { useAnimationFrame, useFrameRef, useFrameValue } from '../lib/useFrame';
 import { useStore } from '../state/store';
 import type { Tile } from '../state/store';
 
@@ -17,6 +18,10 @@ import type { Tile } from '../state/store';
  * between bins rather than measured. It is still the best available answer, but
  * it is not detail the transform captured, and a display that draws it exactly
  * like the resolved bands is quietly lying about its own resolution.
+ *
+ * The strip across the top names the tallest band and its level. The engine
+ * picks the band and refines its frequency (`Frame.peakBand`); nothing is
+ * derived here, so the readout can never disagree with the bars under it.
  */
 
 interface Options {
@@ -139,9 +144,34 @@ export function RtaTile({ tile }: { tile: Tile }) {
   });
 
   return (
-    <div className="tile-body">
-      <canvas ref={canvas} className="fill" />
+    <div className="tile-body rta">
+      <RtaPeakBanner />
+      <canvas ref={canvas} className="rta-canvas" />
       {!plan && <p className="tile-empty">Waiting for a band plan…</p>}
+    </div>
+  );
+}
+
+/**
+ * The peak readout, in its own component so that its ten-a-second re-render
+ * does not take the canvas with it. The level is the band's own bar height,
+ * read straight out of the frame, and the unit follows the calibration
+ * exactly as it does on the SPL tile.
+ */
+function RtaPeakBanner() {
+  const frame = useFrameValue(100);
+  const peak = frame?.peakBand ?? null;
+  const level = frame && peak ? frame.bandsDb[peak.index] : undefined;
+  const calibrated = frame?.calibrated ?? false;
+
+  return (
+    <div className="rta-head" title="The tallest band of the RTA, and its level">
+      <span className="rta-peak-name">Peak</span>
+      <span className="rta-peak-hz">{formatHz(peak?.hz)}</span>
+      <span className="rta-peak-level">{formatLevel(level)}</span>
+      <span className={calibrated ? 'rta-peak-unit' : 'rta-peak-unit uncal'}>
+        {calibrated ? 'dB SPL' : 'dBFS'}
+      </span>
     </div>
   );
 }

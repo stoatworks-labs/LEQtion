@@ -730,6 +730,55 @@ canvas.fill {
 
 /* --- Level history chart ------------------------------------------------ */
 
+/* ---------- RTA: the peak strip and the canvas under it ---------- */
+
+.tile-body.rta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  min-height: 0;
+}
+
+.rta-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 2px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rta-peak-name {
+  color: var(--muted);
+}
+
+.rta-peak-hz {
+  font: 600 15px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  min-width: 7.5ch;
+}
+
+.rta-peak-level {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.rta-peak-unit {
+  font-size: 11px;
+  color: var(--good);
+}
+
+.rta-peak-unit.uncal {
+  color: var(--warn);
+}
+
+.rta-canvas {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
 .tile-body.chart {
   display: flex;
   flex-direction: column;
