@@ -133,6 +133,21 @@ Traps confirmed 2026-08-11:
 - `release-local.sh --upload` re-runs the *entire* build before uploading, so it is not
   a cheap way to publish artefacts that were already built.
 
+**Every Developer ID build up to v0.2.0-beta.1 was deaf, found 2026-09-11.** Both lines
+metered exactly digital silence from every input — built-in mic, Dante Virtual Soundcard —
+and never once showed the microphone prompt. Signing with the identity made the bundle
+hardened (Tauri's default) and nothing gave Tauri an entitlements file, so it lacked
+`com.apple.security.device.audio-input`; macOS's answer to that is refusal without a prompt,
+without an error, and without the TCC row that would let the user allow it by hand. v0.1.0
+was ad-hoc signed and not hardened, which is why it asked and v0.1.1 stopped. Proved by
+re-signing the shipped beta bundle with only that entitlement added — it prompted at once
+and read DVS. Fix: `scripts/mac-entitlements.plist`, `bundle.macOS.entitlements` in
+`tauri.conf.json`, and `release-local.sh` now refuses to stage a hardened bundle without it.
+Landed on `main` (v0.1.2, unreleased) and `next`; **neither line has shipped the fix yet** —
+v0.1.2 and v0.2.0-beta.2 need cutting. The TCC grant is keyed to the Developer ID
+requirement, so a `tauri dev` build (not hardened, attributed to the terminal) never shows
+the problem.
+
 ## Tauri 2 NSIS DOES accept a semver pre-release version (2026-08-22)
 
 The open question when cutting [livepremier plus](https://github.com/stoatworks-labs/livepremier-plus/blob/main/docs/NOTES.md) (`livepremier-plus`) v0.4.0-preview.1:

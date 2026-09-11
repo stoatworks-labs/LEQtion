@@ -302,6 +302,19 @@ and service kTCCServiceMicrophone` in `log show --predicate 'subsystem == "com.a
 is the tell, and `tccutil reset Microphone com.allansargeant.leqtion` is the fix. Neither
 failure reaches the app as an error.
 
+**A hardened bundle without `com.apple.security.device.audio-input` is refused the
+microphone without ever being asked.** That is why v0.1.1 and v0.2.0-beta.1 metered silence
+on every Mac: Developer ID signing made the bundle hardened (Tauri's default), nothing gave
+Tauri an entitlements file, and macOS's answer to a hardened process without that entitlement
+is silent refusal — no prompt, no error, no row under Privacy & Security → Microphone, so the
+user cannot even grant it by hand. `NSMicrophoneUsageDescription` is the *text* of the prompt;
+the entitlement is what lets the prompt exist. The file is `scripts/mac-entitlements.plist`,
+wired in through `bundle.macOS.entitlements` in `tauri.conf.json`, and `release-local.sh`
+refuses to stage a hardened bundle that lacks it. Check any bundle with
+`codesign -d --entitlements - --xml LEQtion.app`: a hardened bundle (`flags=…(runtime)` in
+`codesign -dvv`) that prints no entitlements is this bug again. A `tauri dev` build is not
+hardened, which is why the problem never shows in development.
+
 ## 6. What has and has not been verified
 
 Verified:

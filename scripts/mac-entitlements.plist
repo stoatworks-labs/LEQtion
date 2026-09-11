@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the macOS bundle. Two signers read this one
+  file: Tauri, via bundle.macOS.entitlements in src-tauri/tauri.conf.json, and
+  release-lib.sh, which auto-detects scripts/mac-entitlements.plist.
+
+  audio-input is the whole point. A Developer ID build is hardened (Tauri's
+  default), and a hardened process that lacks this entitlement is refused the
+  microphone WITHOUT the permission prompt ever appearing: the stream opens,
+  the callback fires, every sample is exactly zero, and the app never shows up
+  under System Settings > Privacy & Security > Microphone because no TCC entry
+  was ever created. v0.1.1 and v0.2.0-beta.1 both shipped that way.
+
+  NSMicrophoneUsageDescription (src-tauri/Info.plist) is the other half: that
+  is the text of the prompt, this is what allows the prompt to exist.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>
