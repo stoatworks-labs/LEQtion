@@ -1,8 +1,9 @@
 # Field test checklist
 
-Everything in LEQtion is verified against synthetic signals with known answers. This is the
-list of things that **only real hardware can settle**, written down so it survives between
-sessions. Nothing here has been done yet.
+The DSP in LEQtion is verified against synthetic signals with known answers, and the audio
+path has run on real Core Audio hardware on macOS. This is the list of things that **only real
+hardware can settle**, written down so it survives between sessions. Nothing here has been
+done yet.
 
 Work top to bottom: each step assumes the ones above it passed. Record what you actually
 saw, not what you expected — a result that disagrees with this document means this document
