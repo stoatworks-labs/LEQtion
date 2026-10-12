@@ -78,8 +78,8 @@ used in anger on a show yet.
   microphone permission. Calibration is refused while it's open, since there's no
   capsule in the chain, and an offset taken from a synthetic sine would be a number made
   up out of nothing.
-- **Backends**: Core Audio, WASAPI, ALSA and JACK out of the box; ASIO behind a build
-  flag ([docs/asio.md](docs/asio.md)).
+- **Backends**: Core Audio, WASAPI and ALSA out of the box; ASIO behind a build flag
+  ([docs/asio.md](docs/asio.md)).
 
 ## The bits that matter
 

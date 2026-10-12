@@ -172,7 +172,7 @@ hoping nobody notices.
 
 ## Backends
 
-Core Audio, WASAPI, ALSA and JACK out of the box. ASIO is behind a build flag and compiles, but
+Core Audio, WASAPI and ALSA out of the box. ASIO is behind a build flag and compiles, but
 **it has never carried audio**; see [asio.md](asio.md).
 
 ---
