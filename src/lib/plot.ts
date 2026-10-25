@@ -159,3 +159,39 @@ export function fitCanvas(canvas: HTMLCanvasElement): { width: number; height: n
   if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { width, height, changed };
 }
+
+/** Vectorscope zoom steps. Powers of two, so each step is 6 dB and says so. */
+export const SCOPE_ZOOMS = [1, 2, 4, 8, 16, 32, 64] as const;
+
+/** What each zoom step is called on screen. A table, not a calculation. */
+export const SCOPE_ZOOM_LABEL: Record<number, string> = {
+  1: '×1 full scale',
+  2: '×2 +6 dB',
+  4: '×4 +12 dB',
+  8: '×8 +18 dB',
+  16: '×16 +24 dB',
+  32: '×32 +30 dB',
+  64: '×64 +36 dB',
+};
+
+/**
+ * The vectorscope's automatic zoom, against the engine's peak envelope
+ * (`StereoReading.peak`, linear, full scale = 1).
+ *
+ * Zooms out at once when the trace passes 90 % of the plot, and in only while
+ * the next step up would leave it at or under 70 % — so between 35 % and 90 %
+ * a level holds one zoom rather than flicking between two. Silence holds
+ * whatever zoom was in force. The zoom is drawn on the tile, because a
+ * magnified trace that does not say so reads as a louder signal.
+ */
+export function autoZoom(peak: number, current: number): number {
+  if (!(peak > 0) || !Number.isFinite(peak)) return current;
+  const max = SCOPE_ZOOMS[SCOPE_ZOOMS.length - 1];
+  let z = Math.min(max, Math.max(1, current));
+  while (z > 1 && peak * z > ZOOM_OUT_ABOVE) z /= 2;
+  while (z < max && peak * z * 2 <= ZOOM_IN_BELOW) z *= 2;
+  return z;
+}
+
+const ZOOM_OUT_ABOVE = 0.9;
+const ZOOM_IN_BELOW = 0.7;

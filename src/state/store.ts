@@ -15,6 +15,7 @@ import { create } from 'zustand';
 import { api, errorText } from '../lib/ipc';
 import {
   DEFAULT_ENGINE_CONFIG,
+  DEFAULT_ROUTING,
   type BandPlan,
   type Calibration,
   type CalibrationTarget,
@@ -39,7 +40,10 @@ export type TileKind =
   | 'spl'
   | 'leq'
   | 'transfer'
-  | 'generator';
+  | 'generator'
+  | 'vectorscope'
+  | 'loudness'
+  | 'periods';
 
 export interface Tile {
   id: string;
@@ -78,6 +82,9 @@ export const MIN_SIZE: Record<TileKind, { w: number; h: number }> = {
   chart: { w: 4, h: 2 },
   transfer: { w: 4, h: 3 },
   generator: { w: 3, h: 2 },
+  vectorscope: { w: 3, h: 3 },
+  loudness: { w: 3, h: 2 },
+  periods: { w: 4, h: 2 },
 };
 
 export const DEFAULT_SIZE: Record<TileKind, { w: number; h: number }> = {
@@ -89,6 +96,9 @@ export const DEFAULT_SIZE: Record<TileKind, { w: number; h: number }> = {
   chart: { w: 8, h: 4 },
   transfer: { w: 8, h: 5 },
   generator: { w: 4, h: 2 },
+  vectorscope: { w: 4, h: 5 },
+  loudness: { w: 4, h: 3 },
+  periods: { w: 8, h: 4 },
 };
 
 /**
@@ -254,6 +264,7 @@ export const useStore = create<Store>((set, get) => ({
         // A settings file from before any LEQ was defined would leave the
         // default LEQ tile pointing at nothing.
         leqs: s.settings.engine.leqs?.length ? s.settings.engine.leqs : defaultLeqs(),
+        routing: s.settings.engine.routing ?? DEFAULT_ROUTING,
       };
       const layout = isLayout(s.settings.layout) ? s.settings.layout : defaultLayout();
 

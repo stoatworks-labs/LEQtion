@@ -15,6 +15,10 @@ import type { Tile } from '../state/store';
  * LAeq,5min two minutes into a measurement is a real number over two minutes, not
  * a five-minute figure, and quoting it as one would be wrong. The fill bar and
  * the "filling" note say so until the window is complete.
+ *
+ * A periodic LEQ shows the period in progress, and its bar is how far through
+ * that period the clock is. The finished periods are what an LEQ periods tile
+ * draws.
  */
 
 interface Options {
@@ -40,6 +44,7 @@ export function LeqTile({ tile }: { tile: Tile }) {
   }
 
   const filling = spec.window.kind === 'sliding' && (reading?.fill ?? 0) < 0.999;
+  const periodic = spec.window.kind === 'periodic';
 
   return (
     <div className="tile-body leq">
@@ -53,14 +58,18 @@ export function LeqTile({ tile }: { tile: Tile }) {
           {reading?.calibrated ? 'dB SPL' : 'dBFS'}
         </span>
       </div>
-      {spec.window.kind === 'sliding' && (
-        <div className="leq-fill" title={`${Math.round((reading?.fill ?? 0) * 100)}% of the window`}>
+      {(spec.window.kind === 'sliding' || periodic) && (
+        <div
+          className="leq-fill"
+          title={`${Math.round((reading?.fill ?? 0) * 100)}% of the ${periodic ? 'period' : 'window'}`}
+        >
           <span style={{ width: `${Math.round((reading?.fill ?? 0) * 100)}%` }} />
         </div>
       )}
       <div className="leq-foot">
         <span>{formatElapsed(reading?.elapsedSeconds ?? 0)}</span>
         {filling && <span className="leq-filling">filling</span>}
+        {periodic && <span>this period so far</span>}
       </div>
     </div>
   );

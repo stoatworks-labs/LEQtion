@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 
 import { fitCanvas, freqToUnit, heatRgba } from '../lib/plot';
-import { useAnimationFrame, useFrameRef } from '../lib/useFrame';
+import { inputName } from '../lib/format';
+import { useAnimationFrame, useFrameRef, useFrameValue, useSpectrumCalibrated } from '../lib/useFrame';
 import { useStore } from '../state/store';
 import type { Tile } from '../state/store';
 
@@ -38,7 +39,8 @@ export function SpectrographTile({ tile }: { tile: Tile }) {
   const lastPaint = useRef(0);
   const frameRef = useFrameRef();
   const plan = useStore((s) => s.plan);
-  const calibrated = useStore((s) => s.calibration != null);
+  const calibrated = useSpectrumCalibrated();
+  const input = useFrameValue(500)?.inputs.spectrum;
 
   const opts = tile.options as Options;
   const top = opts.top ?? (calibrated ? 110 : -10);
@@ -146,14 +148,17 @@ export function SpectrographTile({ tile }: { tile: Tile }) {
   return (
     <div className="tile-body">
       <canvas ref={canvas} className="fill" />
-      <span className="tile-corner">{span}s</span>
+      <span className="tile-corner">
+        {input ? `${inputName(input)} · ` : ''}
+        {span}s
+      </span>
     </div>
   );
 }
 
 export function SpectrographSettings({ tile }: { tile: Tile }) {
   const setTileOptions = useStore((s) => s.setTileOptions);
-  const calibrated = useStore((s) => s.calibration != null);
+  const calibrated = useSpectrumCalibrated();
   const opts = tile.options as Options;
 
   return (

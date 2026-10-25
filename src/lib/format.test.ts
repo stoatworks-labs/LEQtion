@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeWindow, formatElapsed, formatHz, formatLevel, levelName, NO_READING } from './format';
+import {
+  describeWindow,
+  formatBalance,
+  formatCorrelation,
+  formatElapsed,
+  formatHz,
+  formatLevel,
+  inputName,
+  inputsName,
+  levelName,
+  NO_READING,
+} from './format';
 
 describe('levelName', () => {
   /**
@@ -14,6 +25,8 @@ describe('levelName', () => {
     expect(levelName('z', { kind: 'sliding', seconds: 0.125 })).toBe('LZeq,125ms');
     expect(levelName('c', { kind: 'sliding', seconds: 3600 })).toBe('LCeq,1h');
     expect(levelName('c', { kind: 'sliding', seconds: 10 })).toBe('LCeq,10s');
+    // `leq::tests::a_periodic_leq_is_named_so_it_cannot_pass_for_a_sliding_one`
+    expect(levelName('a', { kind: 'periodic', seconds: 900 })).toBe('LAeq,15min periods');
   });
 
   it('does not leave a trailing zero on a whole number', () => {
@@ -47,6 +60,36 @@ describe('describeWindow', () => {
     expect(describeWindow({ kind: 'sliding', seconds: 5 })).toBe('5 s');
     expect(describeWindow({ kind: 'sliding', seconds: 300 })).toBe('5 min');
     expect(describeWindow({ kind: 'sliding', seconds: 3600 })).toBe('1 h');
+    // The Rust `LeqWindow::label` for the same window.
+    expect(describeWindow({ kind: 'periodic', seconds: 900 })).toBe('every 15 min');
+  });
+});
+
+describe('inputs', () => {
+  it('counts from one, as the device bar does', () => {
+    expect(inputName({ kind: 'channel', index: 0 })).toBe('In 1');
+    expect(inputName({ kind: 'mix' })).toBe('Mix');
+    expect(inputsName([2, 3])).toBe('In 3+4');
+    expect(inputsName([])).toBe('none');
+  });
+});
+
+describe('formatCorrelation', () => {
+  it('always shows the sign, so a negative reading cannot pass for a positive one', () => {
+    expect(formatCorrelation(0.834)).toBe('+0.83');
+    expect(formatCorrelation(-0.41)).toBe('\u22120.41');
+    expect(formatCorrelation(0.001)).toBe('0.00');
+    expect(formatCorrelation(-0.001)).toBe('0.00');
+    expect(formatCorrelation(null)).toBe('-.--');
+  });
+});
+
+describe('formatBalance', () => {
+  it('names the louder side', () => {
+    expect(formatBalance(2.14)).toBe('L 2.1 dB');
+    expect(formatBalance(-0.4)).toBe('R 0.4 dB');
+    expect(formatBalance(0.01)).toBe('centre');
+    expect(formatBalance(null)).toBe('—');
   });
 });
 

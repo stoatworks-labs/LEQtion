@@ -85,8 +85,8 @@ export function DeviceBar({ onCalibrate }: { onCalibrate: () => void }) {
         </select>
       </label>
 
-      <label>
-        Channel
+      <label title="The input the levels read: SPL, LEQ, the bargraph, the history, the log and the calibration. Every other meter can read its own — see Inputs in the toolbar.">
+        Levels input
         <select
           value={config.channel.kind === 'mix' ? 'mix' : String(config.channel.index)}
           onChange={(e) =>

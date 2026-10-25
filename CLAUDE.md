@@ -9,7 +9,7 @@ Command reference. For the model, the invariants and the traps, read
 npm install
 npm run app          # tauri dev
 npm run app:build    # bundle (.dmg / .msi / .AppImage)
-npm test             # vitest — 25 tests
+npm test             # vitest — 32 tests
 npm run typecheck    # tsc -b
 npm run lint         # oxlint
 ```
@@ -53,6 +53,11 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
   been tried, measured and rejected; the numbers are in the comments.
 - Spectrum normalisation is `2/(N·S2)` and a full-scale sine reads **0 dBFS**.
 - **Never present an uncalibrated level as dB SPL.** Every readout states its unit.
+- **A calibration belongs to the levels input.** Each meter reads its own input
+  (`EngineConfig::routing`) and carries its own calibrated flag; the UI reads that flag, never
+  "is a calibration loaded". See AGENTS.md §4.10.
+- **LUFS never takes a calibration** and is not the app's dBFS (a full-scale sine is −3.01
+  LUFS). See AGENTS.md §4.11.
 - The frontend renders; it does not calculate. No band tables or decibels in `src/`.
 - **Never draw a transfer function without coherence.** The magnitude trace breaks below
   the floor; points fade in proportion. Coherence before four averages is meaningless.

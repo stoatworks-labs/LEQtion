@@ -832,3 +832,365 @@ button.logging {
   border-color: var(--bad);
   color: var(--bad);
 }
+
+/* ---------- routing labels ---------- */
+
+.rta-inputs {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rta-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 8px;
+}
+
+.rta-swatch.bars {
+  background: var(--accent);
+}
+
+.rta-swatch.line {
+  height: 0;
+  border-top: 2px solid #f0a33a;
+}
+
+/* Block, not the panel's wrapping flex row: the note belongs under the
+   table, and .hint's flex-basis would otherwise set it beside it. */
+.panel.inputs {
+  display: block;
+}
+
+.panel.inputs .hint {
+  margin-top: 8px;
+  max-width: 72ch;
+}
+
+.inputs-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.inputs-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 10px 4px 0;
+}
+
+.inputs-table td {
+  padding: 3px 10px 3px 0;
+  vertical-align: middle;
+}
+
+.inputs-table td:last-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.inputs-what {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.inputs-pair {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inputs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: 420px;
+}
+
+.chip-check {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- vectorscope ---------- */
+
+.tile-body.scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  min-height: 0;
+}
+
+.scope-canvas {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+.scope-note {
+  color: var(--warn);
+}
+
+.scope-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  padding: 0 2px 2px;
+}
+
+.scope-meter-end {
+  width: 2ch;
+  text-align: center;
+}
+
+.corr-track {
+  position: relative;
+  flex: 1;
+  height: 10px;
+  min-width: 60px;
+  border-radius: 2px;
+  background: linear-gradient(to right, rgba(229, 72, 77, 0.35), rgba(255, 255, 255, 0.04) 50%, rgba(58, 166, 117, 0.35));
+}
+
+.corr-zero {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.corr-needle,
+.corr-min {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  transform: translateX(-50%);
+}
+
+.corr-needle {
+  width: 3px;
+  background: var(--good);
+}
+
+.corr-needle.bad {
+  background: var(--bad);
+}
+
+.corr-min {
+  width: 1px;
+  background: var(--warn);
+}
+
+.corr-value {
+  min-width: 5ch;
+  text-align: right;
+  font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
+.corr-value.bad {
+  color: var(--bad);
+}
+
+.corr-min-value,
+.scope-balance {
+  min-width: 7ch;
+}
+
+/* ---------- loudness ---------- */
+
+.tile-body.loud {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  overflow: hidden;
+}
+
+.loud-main {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+.loud-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.loud-name {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.loud-value {
+  font: 600 22px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.loud-readout.big .loud-value {
+  font-size: clamp(26px, 4.5vw, 44px);
+}
+
+.loud-unit {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.loud-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.loud-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.loud-bar-label {
+  width: 1.5ch;
+}
+
+.loud-bar-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: visible;
+}
+
+.loud-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.loud-bar-target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--warn);
+}
+
+.loud-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.loud-stats div {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+}
+
+.loud-stats dt {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.loud-stats dd {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.loud-settling {
+  font-size: 10px;
+  color: var(--warn);
+}
+
+.loud-foot {
+  display: flex;
+  gap: 12px;
+  margin-top: auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.loud-note {
+  margin-left: auto;
+}
+
+.chart-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.chart-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+
+.chart-series {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  margin: 0;
+}
+
+.chart-series legend {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.periods-now,
+.periods-total {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Wraps whole readouts, never inside one: a narrow tile would otherwise
+   break "last 78.4" across two lines. */
+.periods-head {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+
+.periods-head > span {
+  white-space: nowrap;
+}
+
+.periods-total {
+  color: #f0a33a;
+}
+
+.periods-limit {
+  color: var(--bad);
+  font-variant-numeric: tabular-nums;
+}

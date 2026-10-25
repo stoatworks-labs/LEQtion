@@ -9,19 +9,27 @@
 //! the integration happens on `push`, not on `frame`.
 //!
 //! ```text
-//!   interleaved f32 ─▶ fold to mono ─▶ ┬─▶ peak / clip
-//!                                      ├─▶ spectrum (unweighted) ─▶ bands
-//!                                      └─▶ A / C / Z filters ─▶ ┬─▶ SPL detectors
-//!                                                               └─▶ LEQ accumulators
+//!   interleaved f32 ─┬─▶ levels input ─▶ ┬─▶ peak / clip
+//!                    │                   └─▶ A / C / Z filters ─▶ ┬─▶ SPL detectors
+//!                    │                                            └─▶ LEQ accumulators
+//!                    ├─▶ RTA input ───────▶ spectrum (unweighted) ─▶ bands
+//!                    ├─▶ compare input ───▶ second spectrum ─▶ overlay bands
+//!                    ├─▶ stereo pair ─────▶ vectorscope, correlation, balance
+//!                    └─▶ loudness inputs ─▶ BS.1770 K-weighting ─▶ LUFS
 //! ```
+//!
+//! Each meter reads its own input — see [`Routing`]. The levels input is the
+//! one a calibration belongs to.
 
 use serde::{Deserialize, Serialize};
 
 use crate::bands::BandPlan;
 use crate::calibration::{Calibration, CalibrationRun, CalibrationSample, CalibrationStatus, CalibrationTarget};
 use crate::history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
-use crate::leq::{LeqAccumulator, LeqReading, LeqSpec};
+use crate::leq::{LeqAccumulator, LeqPeriods, LeqReading, LeqSpec};
+use crate::loudness::{LoudnessMeter, LoudnessReading};
 use crate::spectrum::{PeakBand, SpectrumAnalyser, SpectrumConfig};
+use crate::stereo::{ScopePoints, Stereo, StereoPair, StereoReading};
 use crate::spl::{
     amplitude_to_dbfs, mean_square_to_dbfs, LevelDetector, MinMax, PeakTracker, TimeWeighting,
     SILENCE_DBFS,
@@ -47,6 +55,96 @@ impl Default for ChannelSelect {
     }
 }
 
+impl ChannelSelect {
+    /// The select as it will actually be read from a device with `channels`
+    /// inputs: an out-of-range channel falls back to the last one, and the mix
+    /// of a one-channel device *is* that channel. Two selects that resolve to
+    /// the same thing read the same samples. Zero channels — nothing has
+    /// arrived yet — leaves the select as it is.
+    pub fn resolve(self, channels: usize) -> ChannelSelect {
+        match self {
+            _ if channels == 0 => self,
+            ChannelSelect::Channel { index } => ChannelSelect::Channel {
+                index: index.min(channels - 1),
+            },
+            ChannelSelect::Mix if channels == 1 => ChannelSelect::Channel { index: 0 },
+            ChannelSelect::Mix => ChannelSelect::Mix,
+        }
+    }
+}
+
+/// Which input each meter reads.
+///
+/// The levels — SPL, LEQ, the bargraph, the history, the log and calibration —
+/// read [`EngineConfig::channel`], as they always have. Everything else can be
+/// pointed elsewhere: a measurement microphone on input 1 for the levels, the
+/// RTA and the transfer function, with the desk's stereo feed on 3 and 4 for
+/// the RTA's comparison trace, the vectorscope and the loudness.
+///
+/// `None` on a single-input meter means "the same as the levels". That is what
+/// a rig with one microphone wants, and it is what every settings file written
+/// before routing existed means, so they load unchanged.
+///
+/// **A calibration belongs to the levels input.** Any other meter reading the
+/// same input is calibrated with it; a meter reading anything else is dBFS,
+/// and its own flag in the frame says so (§4.4). The desk feed on input 3 has
+/// never been anywhere near the calibrator, and an RTA of it in dB SPL would be
+/// a number with nothing behind it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Routing {
+    /// The RTA and the spectrograph.
+    #[serde(default)]
+    pub spectrum: Option<ChannelSelect>,
+    /// A second RTA trace, drawn over the first. `None` draws none.
+    #[serde(default)]
+    pub compare: Option<ChannelSelect>,
+    /// The transfer function's measurement side. Its reference is chosen with
+    /// the transfer function, not here.
+    #[serde(default)]
+    pub transfer: Option<ChannelSelect>,
+    /// The vectorscope and the correlation meter.
+    #[serde(default)]
+    pub stereo: StereoPair,
+    /// The loudness meter's inputs, each weighted 1.0 — BS.1770's weight for
+    /// left, right and centre.
+    #[serde(default = "default_loudness_inputs")]
+    pub loudness: Vec<usize>,
+}
+
+fn default_loudness_inputs() -> Vec<usize> {
+    vec![0, 1]
+}
+
+impl Default for Routing {
+    fn default() -> Self {
+        Routing {
+            spectrum: None,
+            compare: None,
+            transfer: None,
+            stereo: StereoPair::default(),
+            loudness: default_loudness_inputs(),
+        }
+    }
+}
+
+/// The loudness inputs as they will be read: out-of-range inputs fall back to
+/// the last, as everywhere else, and then duplicates go. Measuring input 2
+/// twice because a two-input device was asked for 3 and 4 would put the
+/// loudness 3 dB high.
+fn resolve_loudness(wanted: &[usize], channels: usize, out: &mut Vec<usize>) {
+    out.clear();
+    for &c in wanted {
+        let c = if channels == 0 { c } else { c.min(channels - 1) };
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    if out.is_empty() {
+        out.push(0);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineConfig {
@@ -59,6 +157,9 @@ pub struct EngineConfig {
     /// chart tile's, because the history exists whether a chart does or not.
     #[serde(default)]
     pub history: HistoryConfig,
+    /// Which input every meter other than the levels reads.
+    #[serde(default)]
+    pub routing: Routing,
 }
 
 impl Default for EngineConfig {
@@ -69,7 +170,20 @@ impl Default for EngineConfig {
             channel: ChannelSelect::default(),
             leqs: Vec::new(),
             history: HistoryConfig::default(),
+            routing: Routing::default(),
         }
+    }
+}
+
+impl EngineConfig {
+    /// What the RTA and spectrograph read.
+    pub fn spectrum_input(&self) -> ChannelSelect {
+        self.routing.spectrum.unwrap_or(self.channel)
+    }
+
+    /// What the transfer function measures.
+    pub fn transfer_input(&self) -> ChannelSelect {
+        self.routing.transfer.unwrap_or(self.channel)
     }
 }
 
@@ -225,6 +339,34 @@ pub struct SplReading {
     pub peak: f64,
 }
 
+/// The RTA's comparison trace.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompareTrace {
+    /// One level per band of the same plan as [`Frame::bands_db`].
+    pub bands_db: Vec<f32>,
+    /// Its own flag, because it usually differs from the main trace's: the
+    /// thing being compared against is rarely the calibrated microphone.
+    pub calibrated: bool,
+}
+
+/// Which inputs every meter is actually reading, after falling back for a
+/// device with fewer inputs than the routing names. Sent so a tile can say
+/// what it is showing without working it out itself.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Inputs {
+    /// Inputs on the device. Zero until the first audio has arrived.
+    pub channels: usize,
+    pub levels: ChannelSelect,
+    pub spectrum: ChannelSelect,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<ChannelSelect>,
+    pub transfer: ChannelSelect,
+    pub stereo: StereoPair,
+    pub loudness: Vec<usize>,
+}
+
 /// Everything the UI needs for one repaint.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,15 +378,24 @@ pub struct Frame {
     /// True when levels are dB SPL. False means they are dBFS and the UI must
     /// say so — an uncalibrated number presented as an SPL is the single most
     /// damaging thing this app could do.
+    ///
+    /// This is the *levels*. Every other meter that can be calibrated carries
+    /// its own flag, because it may be reading a different input.
     pub calibrated: bool,
+    /// True when `bands_db` and `peaks_db` are dB SPL: the RTA is reading the
+    /// levels input and that input is calibrated.
+    pub spectrum_calibrated: bool,
     pub bands_db: Vec<f32>,
     pub peaks_db: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<CompareTrace>,
     pub spl: Vec<SplReading>,
     pub leqs: Vec<LeqReading>,
     /// Time weighting in force for `spl`.
     pub time_weighting: TimeWeighting,
-    /// Strongest frequency component of the latest transform, Hz. Useful on
-    /// its own, and what the calibration screen checks the calibrator against.
+    /// Strongest frequency component of the RTA's latest transform, Hz. The
+    /// calibration run checks its own, on the levels input — see
+    /// `Engine::cal_spectrum`.
     pub dominant_hz: Option<f64>,
     /// The tallest band in `bands_db`, with the frequency behind it — the
     /// peak readout across the top of the RTA. Read from the same average as
@@ -268,6 +419,10 @@ pub struct Frame {
     pub elapsed_seconds: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub calibration: Option<CalibrationStatus>,
+    pub stereo: StereoReading,
+    /// Always relative to full scale. LUFS has no calibrated form.
+    pub loudness: LoudnessReading,
+    pub inputs: Inputs,
 }
 
 pub struct Engine {
@@ -288,6 +443,26 @@ pub struct Engine {
     /// Reused buffer of one value per series, so the per-block feed into the
     /// history does not allocate on the analysis thread.
     history_values: Vec<f64>,
+    /// The comparison trace's analyser, while one is routed.
+    compare: Option<SpectrumAnalyser>,
+    /// An analyser on the levels input, only while a calibration run is going
+    /// and the RTA is reading something else. The run checks the calibrator's
+    /// frequency, and checking the frequency of the wrong input would accept a
+    /// 250 Hz calibrator because the desk feed happened to be playing 1 kHz.
+    cal_spectrum: Option<SpectrumAnalyser>,
+    stereo: Stereo,
+    loudness: LoudnessMeter,
+    /// The loudness inputs as resolved against the last block, and a scratch
+    /// list to resolve the next one into without allocating.
+    loudness_inputs: Vec<usize>,
+    loudness_scratch: Vec<usize>,
+    spectrum_mono: Vec<f32>,
+    compare_mono: Vec<f32>,
+    /// Channel count of the last block, for resolving the routing.
+    channels: usize,
+    /// Time of day at the engine's zero, seconds since midnight, when the
+    /// caller has said. Places periodic LEQs on the clock; see `leq`.
+    clock_origin: Option<f64>,
 }
 
 impl Engine {
@@ -305,6 +480,14 @@ impl Engine {
             .collect();
         let config_history = config.history;
         let series = history_series(&config.leqs);
+        let compare = config
+            .routing
+            .compare
+            .map(|_| SpectrumAnalyser::new(config.spectrum, sample_rate));
+        let stereo = Stereo::new(config.routing.stereo, sample_rate);
+        let mut loudness_inputs = Vec::new();
+        resolve_loudness(&config.routing.loudness, 0, &mut loudness_inputs);
+        let loudness = LoudnessMeter::new(sample_rate, &vec![1.0; loudness_inputs.len()]);
 
         Engine {
             config,
@@ -321,6 +504,16 @@ impl Engine {
             plan_revision: 1,
             history: History::new(config_history, series),
             history_values: Vec::new(),
+            compare,
+            cal_spectrum: None,
+            stereo,
+            loudness,
+            loudness_inputs,
+            loudness_scratch: Vec::new(),
+            spectrum_mono: Vec::new(),
+            compare_mono: Vec::new(),
+            channels: 0,
+            clock_origin: None,
         }
     }
 
@@ -375,6 +568,34 @@ impl Engine {
         {
             self.plan_revision += 1;
         }
+        // An average built from one input is not a reading of another, however
+        // smoothly it would slide across to it.
+        if config.spectrum_input() != self.config.spectrum_input() {
+            self.spectrum.reset_average();
+            self.spectrum.reset_peaks();
+        }
+
+        match (config.routing.compare, self.compare.as_mut()) {
+            (None, _) => self.compare = None,
+            (Some(_), None) => {
+                self.compare = Some(SpectrumAnalyser::new(config.spectrum, sample_rate));
+            }
+            (Some(select), Some(compare)) => {
+                compare.reconfigure(config.spectrum, sample_rate);
+                if Some(select) != self.config.routing.compare {
+                    compare.reset_average();
+                    compare.reset_peaks();
+                }
+            }
+        }
+
+        self.stereo.reconfigure(config.routing.stereo, sample_rate);
+        resolve_loudness(&config.routing.loudness, self.channels, &mut self.loudness_scratch);
+        if self.loudness_scratch != self.loudness_inputs || rate_changed {
+            std::mem::swap(&mut self.loudness_inputs, &mut self.loudness_scratch);
+            self.loudness
+                .reconfigure(sample_rate, &vec![1.0; self.loudness_inputs.len()]);
+        }
 
         if rate_changed {
             self.paths = Weighting::ALL
@@ -393,7 +614,11 @@ impl Engine {
                     acc.reconfigure(spec.clone());
                     kept.push(acc);
                 }
-                None => kept.push(LeqAccumulator::new(spec.clone())),
+                None => {
+                    let mut acc = LeqAccumulator::new(spec.clone());
+                    acc.set_origin(self.clock_now());
+                    kept.push(acc);
+                }
             }
         }
         self.leqs = kept;
@@ -405,6 +630,42 @@ impl Engine {
 
         self.sample_rate = sample_rate;
         self.config = config;
+        // Rebuilt rather than reconfigured: it only exists for the length of a
+        // calibration run, and a run that has just had its input or rate changed
+        // under it should start its frequency check again anyway.
+        self.cal_spectrum = None;
+        self.sync_cal_spectrum();
+    }
+
+    /// The time of day at the engine's current position, if known.
+    fn clock_now(&self) -> Option<f64> {
+        self.clock_origin.map(|o| o + self.elapsed)
+    }
+
+    /// Tell the engine the time of day *now*, in seconds since midnight, so
+    /// periodic LEQs land on the clock. The engine has no clock of its own
+    /// (crate rule); the app calls this when a measurement starts or resets.
+    pub fn set_clock_origin(&mut self, seconds_of_day: Option<f64>) {
+        self.clock_origin = seconds_of_day.map(|o| o - self.elapsed);
+        for acc in &mut self.leqs {
+            acc.set_origin(seconds_of_day);
+        }
+    }
+
+    /// Whether `select` reads the same samples as the levels input.
+    fn reads_levels(&self, select: ChannelSelect) -> bool {
+        select.resolve(self.channels) == self.config.channel.resolve(self.channels)
+    }
+
+    /// Make sure a calibration run has an analyser on the levels input to
+    /// check its frequency with. See `cal_spectrum`.
+    fn sync_cal_spectrum(&mut self) {
+        let needed = self.run.is_some() && !self.reads_levels(self.config.spectrum_input());
+        if !needed {
+            self.cal_spectrum = None;
+        } else if self.cal_spectrum.is_none() {
+            self.cal_spectrum = Some(SpectrumAnalyser::new(self.config.spectrum, self.sample_rate));
+        }
     }
 
     /// Feed interleaved input.
@@ -422,6 +683,10 @@ impl Engine {
             return false;
         }
 
+        if channels != self.channels {
+            self.channels = channels;
+            self.sync_cal_spectrum();
+        }
         fold_channels(samples, channels, self.config.channel, &mut self.mono);
 
         let seconds = frames as f64 / self.sample_rate;
@@ -448,7 +713,35 @@ impl Engine {
         // Take the mono buffer out so the paths can be borrowed mutably
         // alongside it. It is put straight back; nothing else touches it.
         let mono = std::mem::take(&mut self.mono);
-        self.spectrum.push(&mono);
+        // The common case — the RTA on the levels input — folds once.
+        if self.reads_levels(self.config.spectrum_input()) {
+            self.spectrum.push(&mono);
+        } else {
+            let select = self.config.spectrum_input();
+            fold_channels(samples, channels, select, &mut self.spectrum_mono);
+            self.spectrum.push(&self.spectrum_mono);
+        }
+        if let (Some(select), Some(compare)) = (self.config.routing.compare, self.compare.as_mut()) {
+            fold_channels(samples, channels, select, &mut self.compare_mono);
+            compare.push(&self.compare_mono);
+        }
+        if let Some(cal) = self.cal_spectrum.as_mut() {
+            cal.push(&mono);
+        }
+
+        self.stereo.push_interleaved(samples, channels);
+        resolve_loudness(&self.config.routing.loudness, channels, &mut self.loudness_scratch);
+        if self.loudness_scratch != self.loudness_inputs {
+            // Only when the device changes under the setting. The meter starts
+            // again: an integrated loudness of two inputs that becomes one of
+            // a single input part-way through is a reading of neither.
+            std::mem::swap(&mut self.loudness_inputs, &mut self.loudness_scratch);
+            self.loudness
+                .reconfigure(self.sample_rate, &vec![1.0; self.loudness_inputs.len()]);
+        }
+        self.loudness
+            .push_interleaved(samples, channels, &self.loudness_inputs);
+
         let in_force = self.config.time_weighting;
         for p in &mut self.paths {
             p.push(&mono, in_force);
@@ -485,9 +778,10 @@ impl Engine {
                 .iter()
                 .find(|p| p.weighting == Weighting::Z)
                 .expect("Z path always exists");
+            let spectrum = self.cal_spectrum.as_ref().unwrap_or(&self.spectrum);
             run.push(CalibrationSample {
                 level_dbfs: mean_square_to_dbfs(z.block_ms),
-                dominant_hz: self.spectrum.dominant_hz(),
+                dominant_hz: spectrum.dominant_hz(),
                 // The block peak, not `input_peak.peak()`, which is held for
                 // the life of the measurement. Held, a single clip anywhere
                 // earlier pins the run at `Clipping` for good: the dialog says
@@ -536,7 +830,8 @@ impl Engine {
             .collect();
 
         let offset = self.offset_db();
-        let bands_db = if calibrated {
+        let spectrum_calibrated = calibrated && self.reads_levels(self.config.spectrum_input());
+        let bands_db = if spectrum_calibrated {
             self.spectrum
                 .bands_db()
                 .iter()
@@ -545,7 +840,7 @@ impl Engine {
         } else {
             self.spectrum.bands_db().to_vec()
         };
-        let peaks_db = if calibrated {
+        let peaks_db = if spectrum_calibrated {
             self.spectrum
                 .peaks_db()
                 .iter()
@@ -554,13 +849,37 @@ impl Engine {
         } else {
             self.spectrum.peaks_db().to_vec()
         };
+        let compare = match (self.config.routing.compare, &self.compare) {
+            (Some(select), Some(analyser)) => {
+                let calibrated = calibrated && self.reads_levels(select);
+                let shift = if calibrated { offset as f32 } else { 0.0 };
+                Some(CompareTrace {
+                    bands_db: analyser.bands_db().iter().map(|&v| v + shift).collect(),
+                    calibrated,
+                })
+            }
+            _ => None,
+        };
+
+        let ch = self.channels;
+        let inputs = Inputs {
+            channels: ch,
+            levels: self.config.channel.resolve(ch),
+            spectrum: self.config.spectrum_input().resolve(ch),
+            compare: self.config.routing.compare.map(|c| c.resolve(ch)),
+            transfer: self.config.transfer_input().resolve(ch),
+            stereo: self.config.routing.stereo.resolve(ch),
+            loudness: self.loudness_inputs.clone(),
+        };
 
         Frame {
             sample_rate: self.sample_rate,
             plan_revision: self.plan_revision,
             calibrated,
+            spectrum_calibrated,
             bands_db,
             peaks_db,
+            compare,
             spl,
             leqs,
             time_weighting: self.config.time_weighting,
@@ -571,6 +890,9 @@ impl Engine {
             input_silent_seconds: self.silent,
             elapsed_seconds: self.elapsed,
             calibration: self.run.as_ref().map(|r| r.status()),
+            stereo: self.stereo.reading(),
+            loudness: self.loudness.reading(),
+            inputs,
         }
     }
 
@@ -587,8 +909,46 @@ impl Engine {
         self.input_peak.reset();
         self.spectrum.reset_average();
         self.spectrum.reset_peaks();
+        if let Some(compare) = self.compare.as_mut() {
+            compare.reset_average();
+            compare.reset_peaks();
+        }
+        self.stereo.reset_statistics();
+        self.loudness.reset();
         self.history.reset();
+        // Carried forward by what was measured; the app hands over the wall
+        // clock afresh straight after, which also takes out any drift.
+        self.clock_origin = self.clock_now();
         self.elapsed = 0.0;
+    }
+
+    /// Vectorscope points since `since`. See [`Stereo::points_since`].
+    pub fn vectorscope_points(&self, since: u64, max: usize) -> ScopePoints {
+        self.stereo.points_since(since, max)
+    }
+
+    /// The periods of one periodic LEQ, at most `max` of them, in dB SPL once
+    /// calibrated. `None` for an unknown id or an LEQ with another window.
+    pub fn leq_periods(&self, id: &str, max: usize) -> Option<LeqPeriods> {
+        let acc = self.leqs.iter().find(|a| a.spec().id == id)?;
+        let period_seconds = acc.period_seconds()?;
+        let periods = acc
+            .periods(max)
+            .into_iter()
+            .map(|mut p| {
+                p.value = self.to_level(p.value);
+                p.total = self.to_level(p.total);
+                p
+            })
+            .collect();
+        Some(LeqPeriods {
+            id: acc.spec().id.clone(),
+            label: acc.spec().display_label(),
+            weighting: acc.spec().weighting,
+            period_seconds,
+            calibrated: self.calibration.is_some(),
+            periods,
+        })
     }
 
     /// Every series the history is recording, with labels for the UI.
@@ -643,6 +1003,8 @@ impl Engine {
 
     pub fn begin_calibration(&mut self, target: CalibrationTarget) {
         self.run = Some(CalibrationRun::new(target));
+        self.cal_spectrum = None;
+        self.sync_cal_spectrum();
     }
 
     pub fn calibration_status(&self) -> Option<CalibrationStatus> {
@@ -654,12 +1016,14 @@ impl Engine {
     pub fn accept_calibration(&mut self) -> Option<Calibration> {
         let cal = self.run.as_ref()?.accept()?;
         self.run = None;
+        self.cal_spectrum = None;
         self.calibration = Some(cal.clone());
         Some(cal)
     }
 
     pub fn cancel_calibration(&mut self) {
         self.run = None;
+        self.cal_spectrum = None;
     }
 }
 
@@ -1159,5 +1523,287 @@ mod tests {
             .collect();
         e.push_interleaved(&buf, 1);
         assert!(e.frame().spl[2].level.abs() < 0.2);
+    }
+
+    /// Four inputs: a 1 kHz "microphone" on 0, silence on 1, and a 250 Hz
+    /// "desk feed" on 2 and 3, the right side inverted.
+    fn four_inputs(seconds: f64) -> Vec<f32> {
+        let frames = (seconds * RATE) as usize;
+        let mut v = Vec::with_capacity(frames * 4);
+        for i in 0..frames {
+            let t = i as f64 / RATE;
+            let mic = (0.1 * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32;
+            let desk = (0.3 * (2.0 * std::f64::consts::PI * 250.0 * t).sin()) as f32;
+            v.extend_from_slice(&[mic, 0.0, desk, -desk]);
+        }
+        v
+    }
+
+    fn routed(routing: Routing) -> Engine {
+        let mut cfg = EngineConfig {
+            routing,
+            ..EngineConfig::default()
+        };
+        cfg.spectrum.fraction = Fraction::Third;
+        cfg.spectrum.fft_size = 8192;
+        Engine::new(cfg, RATE)
+    }
+
+    fn band_of(e: &Engine, hz: f64) -> usize {
+        e.plan()
+            .bands
+            .iter()
+            .position(|b| b.flo <= hz && hz < b.fhi)
+            .expect("a band contains it")
+    }
+
+    /// The point of routing: the RTA and the levels can be different inputs.
+    #[test]
+    fn the_rta_reads_its_own_input_and_the_levels_keep_theirs() {
+        let mut e = routed(Routing {
+            spectrum: Some(ChannelSelect::Channel { index: 2 }),
+            ..Routing::default()
+        });
+        e.push_interleaved(&four_inputs(1.0), 4);
+        let f = e.frame();
+        let (b250, b1k) = (band_of(&e, 250.0), band_of(&e, 1000.0));
+        assert!(
+            f.bands_db[b250] > f.bands_db[b1k] + 40.0,
+            "the RTA should be showing the 250 Hz desk feed: {} vs {}",
+            f.bands_db[b250],
+            f.bands_db[b1k]
+        );
+        // 0.1 amplitude is −20 dBFS on the levels, from the microphone.
+        let z = f.spl.iter().find(|s| s.weighting == Weighting::Z).unwrap();
+        assert!((z.level + 20.0).abs() < 0.2, "levels read {}", z.level);
+    }
+
+    /// §4.4 for routing. The calibration belongs to the levels input: an RTA on
+    /// the same input is in dB SPL with it, an RTA on the desk feed is not.
+    #[test]
+    fn a_calibration_reaches_only_meters_on_the_levels_input() {
+        let cal = Calibration::new(CalibrationTarget::default(), -26.0);
+
+        let mut same = routed(Routing::default());
+        same.set_calibration(Some(cal.clone()));
+        same.push_interleaved(&four_inputs(0.5), 4);
+        let f = same.frame();
+        assert!(f.calibrated && f.spectrum_calibrated);
+
+        let mut other = routed(Routing {
+            spectrum: Some(ChannelSelect::Channel { index: 2 }),
+            compare: Some(ChannelSelect::Channel { index: 0 }),
+            ..Routing::default()
+        });
+        other.set_calibration(Some(cal));
+        other.push_interleaved(&four_inputs(0.5), 4);
+        let f = other.frame();
+        assert!(f.calibrated, "the levels are still calibrated");
+        assert!(!f.spectrum_calibrated, "the RTA reads the desk feed");
+        let compare = f.compare.expect("a compare trace is routed");
+        assert!(compare.calibrated, "the compare trace reads the calibrated input");
+        // And the numbers agree with the flags: the uncalibrated trace is still
+        // below full scale, the calibrated one has the 120 dB offset in it.
+        let b = band_of(&other, 250.0);
+        assert!(f.bands_db[b] < 0.0);
+        let b = band_of(&other, 1000.0);
+        assert!(compare.bands_db[b] > 90.0, "{}", compare.bands_db[b]);
+    }
+
+    /// A mix and a single channel that happen to be the same input on a mono
+    /// device are the same input, so the calibration reaches both.
+    #[test]
+    fn the_mix_of_a_mono_device_is_its_only_channel() {
+        assert_eq!(
+            ChannelSelect::Mix.resolve(1),
+            ChannelSelect::Channel { index: 0 }
+        );
+        assert_eq!(ChannelSelect::Mix.resolve(2), ChannelSelect::Mix);
+        assert_eq!(
+            ChannelSelect::Channel { index: 5 }.resolve(2),
+            ChannelSelect::Channel { index: 1 }
+        );
+        let mut e = routed(Routing {
+            spectrum: Some(ChannelSelect::Mix),
+            ..Routing::default()
+        });
+        e.set_calibration(Some(Calibration::new(CalibrationTarget::default(), -26.0)));
+        e.push_interleaved(&sine(1000.0, 0.1, 0.2, 1), 1);
+        assert!(e.frame().spectrum_calibrated);
+    }
+
+    #[test]
+    fn the_compare_trace_is_the_spectrum_of_its_input() {
+        let mut e = routed(Routing {
+            compare: Some(ChannelSelect::Channel { index: 2 }),
+            ..Routing::default()
+        });
+        e.push_interleaved(&four_inputs(1.0), 4);
+        let f = e.frame();
+        let compare = f.compare.expect("routed");
+        assert_eq!(compare.bands_db.len(), f.bands_db.len());
+        let (b250, b1k) = (band_of(&e, 250.0), band_of(&e, 1000.0));
+        assert!(f.bands_db[b1k] > f.bands_db[b250] + 40.0, "main trace is the mic");
+        assert!(compare.bands_db[b250] > compare.bands_db[b1k] + 40.0, "compare is the desk");
+
+        let mut cfg = e.config().clone();
+        cfg.routing.compare = None;
+        e.reconfigure(cfg, RATE);
+        assert!(e.frame().compare.is_none());
+    }
+
+    #[test]
+    fn the_vectorscope_reads_its_pair_while_the_levels_read_the_microphone() {
+        let mut e = routed(Routing {
+            stereo: StereoPair { left: 2, right: 3 },
+            ..Routing::default()
+        });
+        e.push_interleaved(&four_inputs(1.0), 4);
+        let f = e.frame();
+        let r = f.stereo.correlation.expect("both sides carry signal");
+        assert!(r < -0.99, "the desk feed's right side is inverted, read {r}");
+        assert_eq!((f.stereo.left, f.stereo.right), (2, 3));
+        assert!(!e.vectorscope_points(0, 100).points.is_empty());
+    }
+
+    /// The transfer function's measurement side follows the levels unless it
+    /// is told otherwise.
+    #[test]
+    fn the_transfer_input_follows_the_levels_by_default() {
+        let mut cfg = EngineConfig {
+            channel: ChannelSelect::Channel { index: 1 },
+            ..EngineConfig::default()
+        };
+        assert_eq!(cfg.transfer_input(), ChannelSelect::Channel { index: 1 });
+        assert_eq!(cfg.spectrum_input(), ChannelSelect::Channel { index: 1 });
+        cfg.routing.transfer = Some(ChannelSelect::Channel { index: 3 });
+        assert_eq!(cfg.transfer_input(), ChannelSelect::Channel { index: 3 });
+    }
+
+    /// Every settings file and show written before routing existed has no
+    /// `routing` key, and must load as the setup it described: everything on
+    /// the levels input.
+    #[test]
+    fn a_config_from_before_routing_loads_unchanged() {
+        let old = serde_json::json!({
+            "spectrum": serde_json::to_value(SpectrumConfig::default()).unwrap(),
+            "timeWeighting": "fast",
+            "channel": { "kind": "channel", "index": 2 },
+            "leqs": [],
+        });
+        let cfg: EngineConfig = serde_json::from_value(old).expect("loads");
+        assert_eq!(cfg.routing, Routing::default());
+        assert_eq!(cfg.spectrum_input(), ChannelSelect::Channel { index: 2 });
+        assert_eq!(cfg.transfer_input(), ChannelSelect::Channel { index: 2 });
+    }
+
+    #[test]
+    fn routing_wire_format_is_camel_case() {
+        let r = Routing {
+            spectrum: Some(ChannelSelect::Mix),
+            ..Routing::default()
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "spectrum": { "kind": "mix" },
+                "compare": null,
+                "transfer": null,
+                "stereo": { "left": 0, "right": 1 },
+                "loudness": [0, 1],
+            })
+        );
+
+        let mut e = routed(Routing {
+            compare: Some(ChannelSelect::Channel { index: 2 }),
+            ..Routing::default()
+        });
+        e.push_interleaved(&four_inputs(0.2), 4);
+        let f = serde_json::to_value(e.frame()).unwrap();
+        for key in ["spectrumCalibrated", "compare", "stereo", "loudness", "inputs"] {
+            assert!(f.get(key).is_some(), "{key} missing from the frame");
+        }
+        assert!(f["compare"].get("bandsDb").is_some());
+        let inputs = &f["inputs"];
+        for key in ["channels", "levels", "spectrum", "compare", "transfer", "stereo", "loudness"] {
+            assert!(inputs.get(key).is_some(), "{key} missing from {inputs}");
+        }
+    }
+
+    /// Asking a two-input device for loudness on 3 and 4 must not measure input
+    /// 2 twice — that would read 3 dB high.
+    #[test]
+    fn loudness_inputs_fall_back_without_counting_one_twice() {
+        let mut e = routed(Routing {
+            loudness: vec![2, 3],
+            ..Routing::default()
+        });
+        e.push_interleaved(&sine(1000.0, 0.1, 0.1, 2), 2);
+        assert_eq!(e.frame().inputs.loudness, vec![1]);
+        e.push_interleaved(&four_inputs(0.1), 4);
+        assert_eq!(e.frame().inputs.loudness, vec![2, 3]);
+    }
+
+    /// The calibration run checks the calibrator's frequency on the levels
+    /// input even when the RTA is showing something else — here a 250 Hz desk
+    /// feed, which on its own would fail the run as the wrong frequency.
+    #[test]
+    fn a_calibration_checks_the_levels_input_whatever_the_rta_shows() {
+        let mut e = routed(Routing {
+            spectrum: Some(ChannelSelect::Channel { index: 2 }),
+            ..Routing::default()
+        });
+        e.begin_calibration(CalibrationTarget::default());
+        for _ in 0..50 {
+            e.push_interleaved(&four_inputs(0.1), 4);
+        }
+        let status = e.calibration_status().unwrap();
+        assert!(status.is_ready(), "the calibrator on input 1 is fine: {status:?}");
+    }
+
+    #[test]
+    fn a_periodic_leq_lands_on_the_clock_and_carries_the_calibration() {
+        let mut e = engine(vec![leq("q", Weighting::Z, LeqWindow::Periodic { seconds: 60.0 })]);
+        // 20:00:30: the first period runs to 20:01.
+        e.set_clock_origin(Some(20.0 * 3600.0 + 30.0));
+        for _ in 0..90 {
+            e.push_interleaved(&sine(1000.0, 0.5, 1.0, 1), 1);
+        }
+        e.set_calibration(Some(Calibration::new(CalibrationTarget::default(), -26.0)));
+        let p = e.leq_periods("q", 10).expect("a periodic LEQ");
+        assert!(p.calibrated);
+        assert_eq!(p.period_seconds, 60.0);
+        // 20:00:30–20:01 (short), 20:01–20:02, and 20:02 just begun.
+        assert_eq!(p.periods.len(), 3);
+        assert_eq!(p.periods[0].clock.as_deref(), Some("20:00:30"));
+        assert!(!p.periods[0].complete);
+        assert_eq!(p.periods[1].clock.as_deref(), Some("20:01"));
+        assert!(p.periods[1].complete);
+        assert!(p.periods[2].current);
+        // A 0.5 sine is −6 dBFS; calibrated, 114 dB SPL.
+        assert!((p.periods[0].value - 114.0).abs() < 0.1, "{}", p.periods[0].value);
+        assert!(e.leq_periods("missing", 10).is_none());
+
+        // A reset at 20:02 carries the clock on, so the new first period is a
+        // full one.
+        e.reset_measurement();
+        e.push_interleaved(&sine(1000.0, 0.5, 1.0, 1), 1);
+        let p = e.leq_periods("q", 10).unwrap();
+        assert_eq!(p.periods[0].clock.as_deref(), Some("20:02"));
+    }
+
+    /// An LEQ added mid-measurement is on the clock from when it was added.
+    #[test]
+    fn a_periodic_leq_added_later_starts_from_then() {
+        let mut e = engine(vec![]);
+        e.set_clock_origin(Some(8.0 * 3600.0));
+        e.push_interleaved(&sine(1000.0, 0.5, 30.0, 1), 1);
+        let mut cfg = e.config().clone();
+        cfg.leqs.push(leq("late", Weighting::A, LeqWindow::Periodic { seconds: 60.0 }));
+        e.reconfigure(cfg, RATE);
+        e.push_interleaved(&sine(1000.0, 0.5, 1.0, 1), 1);
+        let p = e.leq_periods("late", 10).unwrap();
+        assert_eq!(p.periods[0].clock.as_deref(), Some("08:00:30"));
     }
 }
