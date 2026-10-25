@@ -7,7 +7,7 @@
  * must agree exactly, or a tile's heading and its own settings row would call
  * the same LEQ two different things. `format.test.ts` pins the cases.
  */
-import type { LeqWindow, Weighting } from '../types';
+import type { ChannelSelect, LeqWindow, Weighting } from '../types';
 
 /**
  * A level, or a placeholder when there is nothing meaningful to show.
@@ -40,14 +40,19 @@ function trim(v: number): string {
   return Number.isInteger(v) ? String(v) : String(+v.toFixed(2));
 }
 
-/** How a window reads in prose: "5 min", "125 ms", "since reset". */
+/** How a window reads in prose: "5 min", "125 ms", "since reset", "every 15 min". */
 export function describeWindow(w: LeqWindow): string {
   if (w.kind === 'elapsed') return 'since reset';
   const s = w.seconds;
-  if (s < 1) return `${Math.round(s * 1000)} ms`;
-  if (s < 60) return `${trim(s)} s`;
-  if (s < 3600) return `${trim(s / 60)} min`;
-  return `${trim(s / 3600)} h`;
+  const length =
+    s < 1
+      ? `${Math.round(s * 1000)} ms`
+      : s < 60
+        ? `${trim(s)} s`
+        : s < 3600
+          ? `${trim(s / 60)} min`
+          : `${trim(s / 3600)} h`;
+  return w.kind === 'periodic' ? `every ${length}` : length;
 }
 
 /** The compact form used inside a level name: `5min`, `125ms`, `1h`. */
@@ -58,11 +63,45 @@ function compactWindow(seconds: number): string {
   return `${trim(seconds / 3600)}h`;
 }
 
-/** `LAeq,5min`, `LCeq`, `LZeq,125ms`. */
+/**
+ * `LAeq,5min`, `LCeq`, `LZeq,125ms`, and `LAeq,15min periods` for consecutive
+ * fixed periods — named apart from the sliding window of the same length,
+ * because the two give different numbers.
+ */
 export function levelName(weighting: Weighting, window: LeqWindow): string {
   const w = weighting.toUpperCase();
   if (window.kind === 'elapsed') return `L${w}eq`;
-  return `L${w}eq,${compactWindow(window.seconds)}`;
+  const name = `L${w}eq,${compactWindow(window.seconds)}`;
+  return window.kind === 'periodic' ? `${name} periods` : name;
+}
+
+/** An input as the device bar numbers them: "In 1", counted from one, or "Mix". */
+export function inputName(select: ChannelSelect): string {
+  return select.kind === 'mix' ? 'Mix' : `In ${select.index + 1}`;
+}
+
+/** A list of inputs: "In 3+4". */
+export function inputsName(inputs: number[]): string {
+  return inputs.length === 0 ? 'none' : `In ${inputs.map((i) => i + 1).join('+')}`;
+}
+
+
+/** A correlation with its sign always shown: "+0.83", "−0.41", "0.00". */
+export function formatCorrelation(r: number | undefined | null): string {
+  if (r == null || !Number.isFinite(r)) return '-.--';
+  const v = r.toFixed(2);
+  if (v === '0.00' || v === '-0.00') return '0.00';
+  return r > 0 ? `+${v}` : `\u2212${v.slice(1)}`;
+}
+
+/**
+ * Which side is louder and by how much: "L 2.1 dB", "R 0.4 dB", "centre". The
+ * number comes from the engine; this only says which way round it is.
+ */
+export function formatBalance(db: number | undefined | null): string {
+  if (db == null || !Number.isFinite(db)) return '—';
+  if (Math.abs(db) < 0.05) return 'centre';
+  return `${db > 0 ? 'L' : 'R'} ${Math.abs(db).toFixed(1)} dB`;
 }
 
 /** Elapsed time as `m:ss`, or `h:mm:ss` once it runs past an hour. */

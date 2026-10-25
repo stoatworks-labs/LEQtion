@@ -30,10 +30,12 @@ import type {
   GeneratorConfig,
   HistoryPoint,
   HostInfo,
+  LeqPeriods,
   LogStatus,
   OpenProject,
   ProjectSummary,
   ReferenceSource,
+  ScopePoints,
   SeriesInfo,
   SessionStatus,
   ShowApplied,
@@ -49,13 +51,20 @@ export const api = {
   startup: () => invoke<Startup>('startup'),
   listHosts: () => invoke<HostInfo[]>('list_hosts'),
   listDevices: (host?: string) => invoke<DeviceInfo[]>('list_devices', { host: host ?? null }),
-  start: (options: CaptureOptions) => invoke<SessionStatus>('start', { options }),
+  // Start and reset carry the time of day, which places periodic LEQs on the
+  // clock — see `secondsOfDay`.
+  start: (options: CaptureOptions) =>
+    invoke<SessionStatus>('start', { options, clock: secondsOfDay(new Date()) }),
   stop: () => invoke<SessionStatus>('stop'),
   status: () => invoke<SessionStatus>('status'),
   frame: () => invoke<Frame>('frame'),
   bandPlan: () => invoke<BandPlan>('band_plan'),
   setConfig: (config: EngineConfig) => invoke<BandPlan>('set_config', { config }),
-  resetMeasurement: () => invoke<void>('reset_measurement'),
+  resetMeasurement: () => invoke<void>('reset_measurement', { clock: secondsOfDay(new Date()) }),
+  vectorscopePoints: (since: number, maxPoints: number) =>
+    invoke<ScopePoints>('vectorscope_points', { since, maxPoints }),
+  leqPeriods: (id: string, maxPoints: number) =>
+    invoke<LeqPeriods | null>('leq_periods', { id, maxPoints }),
   resetPeakHold: () => invoke<void>('reset_peak_hold'),
   beginCalibration: (target: CalibrationTarget) =>
     invoke<void>('begin_calibration', { target }),
@@ -105,6 +114,18 @@ export const api = {
     invoke<ShowSummary>('rename_show', { dir, id, name, notes: notes ?? null }),
   deleteShow: (dir: string, id: string) => invoke<string>('delete_show', { dir, id }),
 };
+
+/**
+ * Local time of day in seconds since midnight.
+ *
+ * The window says what time it is because nothing else can: the engine has no
+ * clock by design, and Rust's `time` crate refuses to read the local offset
+ * in a process that has threads. Clock arithmetic, not measurement — the
+ * frontend still computes no level.
+ */
+export function secondsOfDay(d: Date): number {
+  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
+}
 
 type FrameListener = (frame: Frame) => void;
 

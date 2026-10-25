@@ -4,6 +4,7 @@ import { api, errorText } from '../lib/ipc';
 import { useStore } from '../state/store';
 import { TILE_TYPES } from '../tiles/registry';
 import { levelName } from '../lib/format';
+import { InputsPanel } from './InputsPanel';
 import { FFT_SIZES, FRACTIONS, WINDOWS, type Averaging, type Fraction, type LeqWindow, type LogStatus } from '../types';
 
 /** Window lengths offered when adding an LEQ, in seconds. */
@@ -15,7 +16,22 @@ const LEQ_PRESETS: { label: string; window: LeqWindow }[] = [
   { label: '15 min', window: { kind: 'sliding', seconds: 900 } },
   { label: '1 h', window: { kind: 'sliding', seconds: 3600 } },
   { label: 'since reset', window: { kind: 'elapsed' } },
+  { label: 'every 1 min', window: { kind: 'periodic', seconds: 60 } },
+  { label: 'every 5 min', window: { kind: 'periodic', seconds: 300 } },
+  { label: 'every 15 min', window: { kind: 'periodic', seconds: 900 } },
+  { label: 'every 1 h', window: { kind: 'periodic', seconds: 3600 } },
 ];
+
+/** A window as a select value, and back. */
+function windowValue(w: LeqWindow): string {
+  return w.kind === 'elapsed' ? 'elapsed' : `${w.kind === 'periodic' ? 'p' : 's'}:${w.seconds}`;
+}
+
+function parseWindow(v: string): LeqWindow {
+  if (v === 'elapsed') return { kind: 'elapsed' };
+  const seconds = Number(v.slice(2));
+  return v.startsWith('p:') ? { kind: 'periodic', seconds } : { kind: 'sliding', seconds };
+}
 
 const AVERAGING: { value: Averaging; label: string }[] = [
   { value: 'fast', label: 'Fast' },
@@ -30,7 +46,7 @@ export function Toolbar() {
   const addTile = useStore((s) => s.addTile);
   const resetLayout = useStore((s) => s.resetLayout);
   const plan = useStore((s) => s.plan);
-  const [panel, setPanel] = useState<'none' | 'analysis' | 'leqs' | 'tiles'>('none');
+  const [panel, setPanel] = useState<'none' | 'analysis' | 'inputs' | 'leqs' | 'tiles'>('none');
 
   const toggle = (p: typeof panel) => setPanel(panel === p ? 'none' : p);
 
@@ -39,6 +55,9 @@ export function Toolbar() {
       <div className="toolbar-row">
         <button type="button" onClick={() => toggle('analysis')} aria-pressed={panel === 'analysis'}>
           Analysis
+        </button>
+        <button type="button" onClick={() => toggle('inputs')} aria-pressed={panel === 'inputs'}>
+          Inputs
         </button>
         <button type="button" onClick={() => toggle('leqs')} aria-pressed={panel === 'leqs'}>
           LEQs <span className="badge">{config.leqs.length}</span>
@@ -177,6 +196,8 @@ export function Toolbar() {
         </div>
       )}
 
+      {panel === 'inputs' && <InputsPanel />}
+
       {panel === 'leqs' && <LeqPanel />}
 
       {panel === 'tiles' && (
@@ -281,13 +302,11 @@ function ResetButtons() {
  * to that preset — losing the setting the user actually asked for.
  */
 function CustomWindowOption({ window }: { window: LeqWindow }) {
-  if (window.kind !== 'sliding') return null;
-  const seconds = window.seconds;
-  const isPreset = LEQ_PRESETS.some(
-    (p) => p.window.kind === 'sliding' && p.window.seconds === seconds,
-  );
-  if (isPreset) return null;
-  return <option value={String(seconds)}>{seconds} s</option>;
+  if (window.kind === 'elapsed') return null;
+  const value = windowValue(window);
+  if (LEQ_PRESETS.some((p) => windowValue(p.window) === value)) return null;
+  const s = window.seconds;
+  return <option value={value}>{window.kind === 'periodic' ? `every ${s} s` : `${s} s`}</option>;
 }
 
 function LeqPanel() {
@@ -331,22 +350,11 @@ function LeqPanel() {
               </td>
               <td>
                 <select
-                  value={l.window.kind === 'elapsed' ? 'elapsed' : String(l.window.seconds)}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    void updateLeq(l.id, {
-                      window:
-                        v === 'elapsed'
-                          ? { kind: 'elapsed' }
-                          : { kind: 'sliding', seconds: Number(v) },
-                    });
-                  }}
+                  value={windowValue(l.window)}
+                  onChange={(e) => void updateLeq(l.id, { window: parseWindow(e.target.value) })}
                 >
                   {LEQ_PRESETS.map((p) => (
-                    <option
-                      key={p.label}
-                      value={p.window.kind === 'elapsed' ? 'elapsed' : String(p.window.seconds)}
-                    >
+                    <option key={p.label} value={windowValue(p.window)}>
                       {p.label}
                     </option>
                   ))}
@@ -389,6 +397,15 @@ function LeqPanel() {
           onClick={() => void addLeq({ label: '', weighting: 'a', window: { kind: 'elapsed' } })}
         >
           Add LAeq since reset
+        </button>
+        <button
+          type="button"
+          title="Consecutive quarter hours on the clock, one LEQ each — draw them with an LEQ periods tile"
+          onClick={() =>
+            void addLeq({ label: '', weighting: 'a', window: { kind: 'periodic', seconds: 900 } })
+          }
+        >
+          Add LAeq,15min periods
         </button>
         <label className="custom">
           Custom window (s)

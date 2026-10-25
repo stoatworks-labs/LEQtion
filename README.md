@@ -25,9 +25,11 @@
 > audio. LEQtion is **not a certified sound level meter** and makes no conformance claim.
 
 A desktop sound level meter and dual-channel analyser: RTA, spectrograph, bargraph,
-time-weighted SPL, as many user-defined LEQs as you want, level history charts, CSV
-logging, a signal generator, and transfer function measurement with phase and coherence —
-arranged on a grid of tiles you lay out yourself.
+time-weighted SPL, as many user-defined LEQs as you want, LEQ periods as bars against a
+limit, level history charts, CSV logging, a vectorscope with phase correlation, an EBU R 128
+loudness meter, a signal generator, and transfer function measurement with phase and
+coherence — arranged on a grid of tiles you lay out yourself, each meter reading whichever
+input you point it at.
 
 [![Watch LEQtion running — 45 seconds](docs/video-thumb.png)](https://www.youtube.com/watch?v=Qe8D6juRCU4)
 
@@ -52,6 +54,8 @@ been used in anger on a show.
 - **RTA** — fractional-octave spectrum from 1/1 down to 1/48, with selectable transform
   size, window, overlap, averaging and peak hold. A strip across the top names the
   tallest band and its level, refined to a fraction of a bin when a tone is what tops it.
+  A second input can be drawn over the bars as a line — the desk feed over the room mic —
+  on its own axis when the two are not in the same unit.
 - **Spectrograph** — the same bands over time, scrolling, on the same log axis as the RTA
   so the two line up when stacked.
 - **Bargraph** — level meter with a held maximum, and a separate input-peak strip that
@@ -60,16 +64,34 @@ been used in anger on a show.
 - **LEQ** — define as many as you like. Each has its own **window** (any length you type,
   or a preset from 1 second to an hour, or "since reset") and its own **weighting**
   (A, C or Z). They run in the engine, so an LEQ keeps integrating whether or not a tile
-  is showing it.
+  is showing it. A window can also be **periodic**: consecutive fixed periods on the
+  clock, one LEQ each — what a licence usually means by LAeq,15min.
+- **LEQ periods** — those periods as bars, quarter hours starting at :00, :15, :30 and :45,
+  with an optional limit line and the running total since reset. The period already under
+  way at Start is hatched and marked short, so a six-minute LAeq is never read against a
+  quarter-hour limit.
 - **Level history** — any of those levels over time, as a line: LEQ, or Fast, Slow and
   Impulse SPL, or peak, on whichever weighting you want. Each point covers a whole
   interval and the band around the line is the min and max *inside* it, so a transient
   between ticks is on the chart rather than missed. Zooming out buckets the points in the
   engine and keeps the extremes — the trace never flattens as you look further back.
+  Up to six series share one chart, each in its own colour.
 - **Data logging** — write the measurement to a CSV, one row per interval, every series
   at once. The rows are the chart's own points rather than a second sampling on a
   different clock. Every row states whether it is calibrated and how many frames have
   been dropped, so a log that covers a gap in the audio says so in the file.
+- **Vectorscope** — a stereo pair as a goniometer: mono vertical, the diamond at full
+  scale, with an afterglow. It zooms itself in 6 dB steps and prints the step, since a
+  magnified trace that does not say so reads as a louder signal. Underneath, phase
+  correlation from −1 to +1 with the lowest since reset held, and the balance.
+- **Loudness** — ITU-R BS.1770 as EBU R 128 meters it: momentary, short-term and integrated
+  LUFS, loudness range, and true peak at 4× oversampling, checked against the EBU's own
+  test cases (Tech 3341 and 3342). LUFS is relative to full scale and never sees a
+  calibration.
+- **Inputs** — every meter reads its own input: the measurement mic on 1 for the levels,
+  the RTA and the transfer function; the desk's stereo feed on 3 and 4 for the
+  vectorscope, the loudness and the RTA's comparison line. One table under **Inputs** in
+  the toolbar, with a column showing what each meter is actually reading.
 - **Calibration** — against a hardware acoustic calibrator, 94 or 114 dB at 1 kHz.
 - **Tiles** — add, remove, drag and resize. The layout persists.
 - **Generator** — pink noise, white noise, sine, and a repeating log sweep, out of a
@@ -184,6 +206,16 @@ is not changed afterwards. Changing gain by one click invalidates the offset com
 nothing in software can detect it, which is why the calibration records the device it was
 taken on.
 
+### A calibration belongs to one input
+
+With every meter able to read its own input, the obvious mistake is a calibration taken
+on the microphone turning up on the desk feed. So it doesn't. The calibration belongs to
+the **levels** input, and only meters reading that same input are in dB SPL. The RTA on
+input 3 reads dBFS and says so, even with the mic on input 1 calibrated to the decimal
+place. Loudness never takes a calibration at all: LUFS is defined against full scale, and
+a full-scale sine reads −3.01 LUFS against 0 dBFS on the level meters. Both are right.
+They're answering different questions.
+
 ### Dropped audio is reported, loudly
 
 If the analysis thread falls behind, the audio callback discards samples rather than
@@ -212,6 +244,12 @@ The whole measurement chain without the window — same engine, same numbers:
 
 ```bash
 cargo run --example meter -- --seconds 30 --offset 120
+```
+
+It takes the same routing as the app, inputs counted from 1:
+
+```bash
+cargo run --example meter -- --device "Pro Tools Audio Bridge 16" --levels 1 --compare 3 --stereo 3,4 --loudness 3,4
 ```
 
 `capture --list` also shows output devices, which matters more than it looks: if your input

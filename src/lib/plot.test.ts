@@ -1,16 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  dbTicks,
-  dbToUnit,
-  formatHz,
-  freqTicks,
-  freqToUnit,
-  heatRgba,
-  unitToFreq,
-  F_MAX,
-  F_MIN,
-} from './plot';
+import { F_MAX, F_MIN, autoZoom, dbTicks, dbToUnit, formatHz, freqTicks, freqToUnit, heatRgba, unitToFreq } from './plot';
 
 describe('frequency axis', () => {
   it('puts the ends of the range at the ends of the axis', () => {
@@ -128,5 +118,33 @@ describe('spectrograph colours', () => {
         expect(c).toBeLessThanOrEqual(255);
       }
     }
+  });
+});
+
+describe('autoZoom', () => {
+  it('fills the plot without letting the trace leave it', () => {
+    // A trace peaking at -18 dBFS (0.126) settles at x4: half the plot.
+    expect(autoZoom(0.126, 1)).toBe(4);
+    expect(autoZoom(1, 64)).toBe(1);
+    expect(autoZoom(0.9, 1)).toBe(1);
+  });
+
+  it('holds its zoom across the hysteresis band', () => {
+    // At x4 a peak of 0.2 is 0.8 of the plot: inside, and too full to step up.
+    expect(autoZoom(0.2, 4)).toBe(4);
+    // The same peak arriving from x1 stops at x2, the first zoom that would
+    // not be over half the plot after one more step.
+    expect(autoZoom(0.2, 1)).toBe(2);
+  });
+
+  it('zooms out at once when the trace would leave the plot', () => {
+    expect(autoZoom(0.3, 8)).toBe(2);
+  });
+
+  it('holds the zoom in silence and stays within its steps', () => {
+    expect(autoZoom(0, 8)).toBe(8);
+    expect(autoZoom(Number.NaN, 8)).toBe(8);
+    expect(autoZoom(1e-9, 1)).toBe(64);
+    expect(autoZoom(0.5, 1000)).toBe(1);
   });
 });

@@ -14,7 +14,9 @@
 //! | [`spectrum`] | Overlapped transforms → averaged band levels (the RTA) |
 //! | [`weighting`] | A, C and Z, as both analytic curves and time-domain filters |
 //! | [`spl`] | Fast/Slow/Impulse detectors, peaks, min/max |
-//! | [`leq`] | Sliding and elapsed equivalent levels |
+//! | [`leq`] | Sliding, elapsed and periodic equivalent levels |
+//! | [`loudness`] | ITU-R BS.1770 / EBU R128 loudness: LUFS, LRA, true peak |
+//! | [`stereo`] | Vectorscope points, phase correlation and balance |
 //! | [`calibration`] | Hardware calibrator workflow and the dBFS → dB SPL offset |
 //! | [`history`] | Levels over time, bucketed per interval — the chart and the log |
 //! | [`engine`] | The one place that ties all of the above to a stream of samples |
@@ -36,20 +38,26 @@ pub mod engine;
 pub mod generator;
 pub mod history;
 pub mod leq;
+pub mod loudness;
 pub mod spectrum;
 pub mod spl;
+pub mod stereo;
 pub mod transfer;
 pub mod weighting;
 pub mod window;
 
 pub use bands::{Band, BandPlan, Fraction};
 pub use calibration::{Calibration, CalibrationStatus, CalibrationTarget};
-pub use engine::{ChannelSelect, Engine, EngineConfig, Frame, SplReading};
+pub use engine::{
+    ChannelSelect, CompareTrace, Engine, EngineConfig, Frame, Inputs, Routing, SplReading,
+};
 pub use generator::{Generator, GeneratorConfig, Signal};
 pub use history::{History, HistoryConfig, HistoryPoint, SeriesInfo, SeriesKind};
-pub use leq::{LeqReading, LeqSpec, LeqWindow};
+pub use leq::{LeqPeriod, LeqPeriods, LeqReading, LeqSpec, LeqWindow};
+pub use loudness::{LoudnessMeter, LoudnessReading};
 pub use spectrum::{Averaging, PeakBand, SpectrumAnalyser, SpectrumConfig, FFT_SIZES};
 pub use spl::TimeWeighting;
+pub use stereo::{ScopePoints, Stereo, StereoPair, StereoReading, StereoSignal};
 pub use transfer::{DelayEstimate, TransferConfig, TransferFunction, TransferPlan, TransferReading};
 pub use weighting::Weighting;
 pub use window::WindowKind;

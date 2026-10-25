@@ -236,11 +236,16 @@ impl Session {
     }
 
     /// Open an input, and an output if the generator needs one.
+    /// `clock` is the time of day now, in seconds since midnight, for placing
+    /// periodic LEQs on the clock — handed to the engine here, before the
+    /// analysis thread exists, because once audio has reached an accumulator it
+    /// can only take a new time of day at its next reset.
     pub fn start(
         &mut self,
         app: AppHandle,
         options: CaptureOptions,
         generator_channel: usize,
+        clock: Option<f64>,
     ) -> Result<StreamInfo, String> {
         self.stop();
         self.generator_channel = generator_channel;
@@ -256,6 +261,7 @@ impl Session {
             let config = a.engine.config().clone();
             a.engine.reconfigure(config, info.sample_rate as f64);
             a.engine.reset_measurement();
+            a.engine.set_clock_origin(clock);
             let tf = a.transfer.config();
             a.transfer.reconfigure(tf, info.sample_rate as f64);
         }
@@ -420,7 +426,7 @@ impl Session {
                                         if missing > 0 {
                                             underruns.fetch_add(missing, Ordering::Relaxed);
                                         }
-                                        let select = a.engine.config().channel;
+                                        let select = a.engine.config().transfer_input();
                                         fold_channels(
                                             &buf[..n],
                                             channels,
@@ -439,7 +445,7 @@ impl Session {
                                             },
                                             &mut reference,
                                         );
-                                        let select = a.engine.config().channel;
+                                        let select = a.engine.config().transfer_input();
                                         fold_channels(
                                             &buf[..n],
                                             channels,

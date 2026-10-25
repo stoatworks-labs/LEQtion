@@ -1,9 +1,10 @@
 # LEQtion user guide
 
 LEQtion is **a desktop sound level meter and dual-channel analyser**: RTA, spectrograph,
-bargraph, time-weighted SPL, as many user-defined LEQs as you want, level history, CSV logging, a
+bargraph, time-weighted SPL, as many user-defined LEQs as you want, LEQ periods against a limit,
+level history, CSV logging, a vectorscope with phase correlation, an EBU R 128 loudness meter, a
 signal generator, and transfer function measurement with phase and coherence — on a grid of tiles
-you lay out yourself.
+you lay out yourself, each meter reading whichever input you point it at.
 
 > **Before you rely on this:** the DSP is verified numerically and pinned as tests — the A and C
 > weighting curves reproduce the IEC 61672-1 table to better than 0.06 dB at the midband
@@ -44,19 +45,39 @@ Add, remove, drag and resize them; the layout persists.
 
 | Tile | What it shows |
 |---|---|
-| **RTA** | Fractional-octave spectrum, 1/1 down to 1/48, with selectable transform size, window, overlap, averaging and peak hold |
+| **RTA** | Fractional-octave spectrum, 1/1 down to 1/48, with selectable transform size, window, overlap, averaging and peak hold. A second input can be drawn over the bars as an amber line — see [Inputs](#inputs-a-different-input-for-each-meter) |
 | **Spectrograph** | The same bands over time, scrolling, on the same log axis as the RTA so the two line up when stacked |
 | **Bargraph** | Level meter with a held maximum, plus a separate input-peak strip that stays in dBFS because headroom is an electrical question |
 | **SPL** | Time-weighted level — Fast, Slow and Impulse — with max, min and peak |
 | **LEQ** | As many as you like, each with its own window and weighting |
-| **Level history** | Any of those levels over time, as a line |
+| **LEQ periods** | A periodic LEQ as one bar per period on the clock, with a limit line and the running total |
+| **Level history** | Any of those levels over time, as a line, up to six on one chart |
 | **Transfer function** | Magnitude, phase and coherence against a reference |
+| **Vectorscope** | A stereo pair as a goniometer, with phase correlation and balance underneath |
+| **Loudness** | LUFS momentary, short-term and integrated, loudness range and true peak (EBU R 128) |
 
 **LEQs run in the engine, not in the tile.** An LEQ keeps integrating whether or not a tile is
 showing it, so you can close one and come back to it.
 
 Each LEQ takes **any window length you type** — or a preset from 1 second to an hour, or "since
 reset" — and its own **weighting** (A, C or Z).
+
+### Periodic LEQs and the LEQ periods tile
+
+A **periodic** window ("every 15 min" in the LEQ list) splits the measurement into consecutive
+fixed periods, each its own LEQ. That's what a licence usually means by LAeq,15min: one figure
+per quarter hour, not a rolling window. Its LEQ tile shows the period in progress; the **LEQ
+periods** tile draws the lot as bars.
+
+- Periods sit **on the clock**. Quarter hours start at :00, :15, :30 and :45, whenever you
+  pressed Start, and every reset puts them back on the wall clock.
+- The period already under way when the measurement started is **hatched and marked short**.
+  It's a real LEQ of the time it covers, but it isn't comparable with a limit set for the full
+  period. Complete periods are solid; the one in progress is outlined.
+- Set a **limit** in the tile's settings and periods over it turn red. The amber line is the LEQ
+  of everything since the reset.
+- Each bar is integrated from that period's own energy in the engine, so it's the period's
+  LEQ, not an average of whatever the chart happened to sample.
 
 ---
 
@@ -72,6 +93,75 @@ rows are the chart's own points rather than a second sampling on a different clo
 
 > Every row states **whether it is calibrated** and **how many frames have been dropped**. A log
 > that covers a gap in the audio says so in the file.
+
+---
+
+## Inputs: a different input for each meter
+
+**Inputs** in the toolbar opens one table: which input every meter reads, and in the right-hand
+column, which one it's actually reading (they differ only when the device has fewer inputs than
+the setting names, and then that's the thing you want to know).
+
+| Meter | Reads | Default |
+|---|---|---|
+| **Levels** — SPL, LEQ, bargraph, history, log, calibration | one input, or the mix | input 1 (also the device bar's **Levels input**) |
+| **RTA** and spectrograph | one input, or the mix | same as the levels |
+| **RTA comparison** | a second input, drawn over the bars as a line | off |
+| **Transfer function** | the measured side (the reference is set on the tile) | same as the levels |
+| **Vectorscope** | a left and a right input | inputs 1 and 2 |
+| **Loudness** | any set of inputs, each weighted 1.0 | inputs 1 and 2 |
+
+A typical split: the measurement mic on input 1 for the levels, the RTA and the transfer
+function, with the desk's stereo feed on 3 and 4 as the transfer reference, the vectorscope, the
+loudness and the RTA's comparison line.
+
+> **A calibration belongs to the levels input.** Only meters reading that same input are in dB
+> SPL. The RTA on the desk feed reads dBFS and says so, however well the mic is calibrated. If
+> the comparison line and the bars are in different units, the line gets its own axis on the
+> right, labelled in its own unit, with the same decibels per pixel so the shapes still compare.
+
+Loudness counts every input at BS.1770's weight for left, right and centre (1.0). Surround
+channels are meant to be weighted 1.41, which LEQtion doesn't do yet, so a 5.1 mix reads a little
+low.
+
+---
+
+## Vectorscope
+
+Each instant of the pair is one point, rotated so that mono is a vertical line, a single side
+lies on its diagonal and out-of-phase is horizontal. The diamond is the edge of the plot.
+
+- It **zooms itself** in 6 dB steps so a −18 dBFS desk feed isn't a dot in the middle, and the
+  step is always printed top left. At ×1 the diamond is full scale.
+- **Afterglow** (Short by default) fades points by time rather than by repaint, so it lasts the
+  same on any display.
+- Underneath: **phase correlation** from −1 to +1. +1 is mono, 0 is two unrelated signals, and
+  anything negative turns red, because that's the part that cancels when the mix is folded to
+  mono. The amber tick is the **lowest since reset**, which a live needle can't tell you after
+  the fact. Then the **balance**: which side is louder, and by how much.
+- With one side silent, correlation has no meaning (it's nought divided by nought), so the tile
+  says which side is missing instead of making a number up.
+
+---
+
+## Loudness
+
+ITU-R BS.1770, as EBU R 128 meters it, and checked against the EBU's published test cases (Tech
+3341 cases 1–6 and 9–23, Tech 3342 cases 1–4).
+
+| Reading | What it is |
+|---|---|
+| **M** | Momentary: the last 400 ms |
+| **S** | Short-term: the last 3 s |
+| **I** | Integrated since reset, gated at −70 LUFS and 10 LU below the programme |
+| **LRA** | Loudness range, EBU Tech 3342. Marked **settling** for its first minute, as Tech 3341 asks |
+| **TP** | True peak since reset, 4× oversampled, in dBTP |
+
+**LUFS is relative to full scale and never takes a calibration.** It isn't the app's dBFS either:
+a full-scale sine reads 0 dBFS on the level meters and −3.01 LUFS here. Both are right.
+**Reset measurement** restarts the integrated loudness, the range, the maxima and the true peak;
+momentary and short-term carry on. The target line (−23 LUFS by default) is a picture, nothing
+more.
 
 ---
 
@@ -197,6 +287,13 @@ The whole measurement chain without the window — same engine, same numbers:
 cargo run --example meter -- --seconds 30 --offset 120
 ```
 
+It takes the same routing as the Inputs panel, inputs counted from 1, and prints the
+correlation, the loudness and what each meter ended up reading:
+
+```bash
+cargo run --example meter -- --levels 1 --compare 3 --stereo 3,4 --loudness 3,4
+```
+
 ---
 
 ## Troubleshooting
@@ -204,6 +301,10 @@ cargo run --example meter -- --seconds 30 --offset 120
 | Symptom | Cause |
 |---|---|
 | **Everything reads dBFS** | Not calibrated. That is the design — it will not present a full-scale level as an SPL. |
+| **The RTA reads dBFS but the SPL tile reads dB SPL** | The RTA is on a different input from the levels. The calibration belongs to the levels input only. See Inputs. |
+| **Loudness reads about 3 dB below the level meters on a tone** | Expected. LUFS and the app's dBFS are referenced differently; a full-scale sine is −3.01 LUFS and 0 dBFS. |
+| **The vectorscope is a vertical line** | The pair is carrying mono — or both sides are the same input, which the tile says in its corner. |
+| **The first LEQ period is hatched** | It started part-way through, when you pressed Start. It isn't comparable with a full-period limit. |
 | **Calibration refused** | One of the four checks failed, and the message says which. "Unstable" usually means the calibrator isn't seated. |
 | **Calibration option greyed out** | The signal generator backend is open. There is no capsule in the chain. |
 | **Levels arrive at exactly digital silence** | macOS is denying microphone access. Since v0.1.2 the app asks on first launch; if you declined, allow it under System Settings → Privacy & Security → Microphone, or run `tccutil reset Microphone com.allansargeant.leqtion` and launch again. v0.1.1 and v0.2.0-beta.1 never asked at all — update. |

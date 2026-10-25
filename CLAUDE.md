@@ -9,7 +9,7 @@ Command reference. For the model, the invariants and the traps, read
 npm install
 npm run app          # tauri dev
 npm run app:build    # bundle (.dmg / .msi / .AppImage)
-npm test             # vitest — 42 tests
+npm test             # vitest — 49 tests
 npm run typecheck    # tsc -b
 npm run lint         # oxlint
 ```
@@ -57,6 +57,11 @@ Needs `CPAL_ASIO_DIR` and LLVM. See [docs/asio.md](docs/asio.md).
   "calibrated" unqualified; a platform guarantee (Android unprocessed = 130 dB) or a
   per-model profile is shown with its source attached. A user calibration always wins.
   Never infer a profile from `target_os` — see AGENTS.md §4.4 and §4.4c.
+- **A calibration belongs to the levels input.** Each meter reads its own input
+  (`EngineConfig::routing`) and carries its own calibrated flag; the UI reads that flag, never
+  "is a calibration loaded". See AGENTS.md §4.13.
+- **LUFS never takes a calibration** and is not the app's dBFS (a full-scale sine is −3.01
+  LUFS). See AGENTS.md §4.14.
 - The frontend renders; it does not calculate. No band tables or decibels in `src/`.
 - **Never draw a transfer function without coherence.** The magnitude trace breaks below
   the floor; points fade in proportion. Coherence before four averages is meaningless.

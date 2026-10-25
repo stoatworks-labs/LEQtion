@@ -21,11 +21,32 @@ import type { HistoryPoint, SeriesInfo } from '../types';
  * than there are pixels and thinning them here would drop peaks — so the width
  * is sent with the request and `history_view` does the reduction where the
  * numbers live. See `leqtion-dsp::history`.
+ *
+ * Several series can share the chart — an LAeq,15min over the LAF it came
+ * from, say — each in its own colour with its own band, on one scale and one
+ * time axis. They are all levels from the same input in the same unit, which
+ * is what makes one axis honest.
  */
 
 interface Options {
+  /** Before overlays: the one series shown. Still read, so old layouts load. */
   seriesId?: string;
+  seriesIds?: string[];
   spanSeconds?: number;
+}
+
+/** Most series one chart draws. Past this the bands are mud. */
+const MAX_SERIES = 6;
+const COLOURS = ['#2f9ee0', '#f0a33a', '#3aa675', '#c678dd', '#e5484d', '#d8dee9'];
+
+function seriesOf(opts: Options): string[] {
+  if (opts.seriesIds?.length) return opts.seriesIds.slice(0, MAX_SERIES);
+  return [opts.seriesId ?? 'spl:a:f'];
+}
+
+interface Trace {
+  id: string;
+  points: HistoryPoint[];
 }
 
 const SPANS = [
@@ -42,10 +63,11 @@ export function ChartTile({ tile }: { tile: Tile }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const calibrated = useStore((s) => s.status.running && s.calibration !== null);
   const opts = tile.options as Options;
-  const seriesId = opts.seriesId ?? 'spl:a:f';
+  const ids = seriesOf(opts);
+  const idsKey = ids.join('|');
   const span = opts.spanSeconds ?? 300;
 
-  const [points, setPoints] = useState<HistoryPoint[]>([]);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const [series, setSeries] = useState<SeriesInfo[]>([]);
 
   useEffect(() => {
@@ -63,12 +85,17 @@ export function ChartTile({ tile }: { tile: Tile }) {
       // column is the most a line can show, and asking for more would only move
       // the thinning into the browser.
       const width = canvas.current?.width ?? 600;
-      try {
-        const p = await api.historyView(seriesId, span, Math.max(2, Math.floor(width)));
-        if (live) setPoints(p);
-      } catch {
-        if (live) setPoints([]);
-      }
+      const budget = Math.max(2, Math.floor(width));
+      const wanted = idsKey.split('|');
+      const got = await Promise.all(
+        wanted.map((id) =>
+          api
+            .historyView(id, span, budget)
+            .then((points) => ({ id, points }))
+            .catch(() => ({ id, points: [] as HistoryPoint[] })),
+        ),
+      );
+      if (live) setTraces(got);
     };
     void tick();
     const timer = setInterval(() => void tick(), REDRAW_MS);
@@ -76,7 +103,7 @@ export function ChartTile({ tile }: { tile: Tile }) {
       live = false;
       clearInterval(timer);
     };
-  }, [seriesId, span]);
+  }, [idsKey, span]);
 
   useEffect(() => {
     const c = canvas.current;
@@ -90,7 +117,9 @@ export function ChartTile({ tile }: { tile: Tile }) {
     // The scale follows the data rather than being fixed: an uncalibrated
     // measurement sits near -40 dBFS and a calibrated one near 80 dB SPL, and a
     // single hard-coded range would put one of them off the top.
-    const values = points.flatMap((p) => [p.min, p.max]).filter((v) => v > -190);
+    const values = traces
+      .flatMap((t) => t.points.flatMap((p) => [p.min, p.max]))
+      .filter((v) => v > -190);
     const top = values.length ? Math.ceil(Math.max(...values) / 10) * 10 + 5 : 0;
     const bottom = values.length ? Math.floor(Math.min(...values) / 10) * 10 - 5 : -100;
 
@@ -98,7 +127,6 @@ export function ChartTile({ tile }: { tile: Tile }) {
     // two charts read as one instrument rather than two.
     const GRID = 'rgba(255,255,255,0.08)';
     const LABEL = 'rgba(255,255,255,0.42)';
-    const INK = '#2f9ee0';
 
     ctx.strokeStyle = GRID;
     ctx.fillStyle = LABEL;
@@ -116,49 +144,68 @@ export function ChartTile({ tile }: { tile: Tile }) {
       if (y > 10 && y < height - 3) ctx.fillText(String(db), 2, y + 3);
     }
 
-    if (points.length < 2) {
+    const drawn = traces.filter((t) => t.points.length >= 2);
+    if (drawn.length === 0) {
       ctx.fillStyle = LABEL;
       ctx.fillText('waiting for the first interval…', 36, Math.round(height / 2));
       return;
     }
 
-    const t0 = points[0].t;
-    const t1 = points[points.length - 1].t;
+    // One time axis for every trace, so a point at 20:15 is at the same x
+    // whichever series it belongs to.
+    const t0 = Math.min(...drawn.map((t) => t.points[0].t));
+    const t1 = Math.max(...drawn.map((t) => t.points[t.points.length - 1].t));
     const dt = Math.max(1e-6, t1 - t0);
     const x = (t: number) => 28 + ((t - t0) / dt) * (width - 30);
     const y = (db: number) => dbToUnit(db, top, bottom) * height;
 
-    // Min-to-max band first, so the mean line sits on top of it.
-    ctx.fillStyle = INK;
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    ctx.moveTo(x(points[0].t), y(points[0].max));
-    for (const p of points) ctx.lineTo(x(p.t), y(p.max));
-    for (let i = points.length - 1; i >= 0; i--) {
-      ctx.lineTo(x(points[i].t), y(points[i].min));
-    }
-    ctx.closePath();
-    ctx.fill();
+    // Every band first, then every line, so no band hides another series' mean.
+    // A lone series keeps the stronger band it always had; overlaid ones get a
+    // lighter one each so they can still be told apart where they overlap.
+    const bandAlpha = drawn.length === 1 ? 0.22 : 0.12;
+    traces.forEach(({ points }, n) => {
+      if (points.length < 2) return;
+      ctx.fillStyle = COLOURS[n % COLOURS.length];
+      ctx.globalAlpha = bandAlpha;
+      ctx.beginPath();
+      ctx.moveTo(x(points[0].t), y(points[0].max));
+      for (const p of points) ctx.lineTo(x(p.t), y(p.max));
+      for (let i = points.length - 1; i >= 0; i--) {
+        ctx.lineTo(x(points[i].t), y(points[i].min));
+      }
+      ctx.closePath();
+      ctx.fill();
+    });
     ctx.globalAlpha = 1;
 
-    ctx.strokeStyle = INK;
     ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    points.forEach((p, i) => {
-      const px = x(p.t);
-      const py = y(p.mean);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+    traces.forEach(({ points }, n) => {
+      if (points.length < 2) return;
+      ctx.strokeStyle = COLOURS[n % COLOURS.length];
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const px = x(p.t);
+        const py = y(p.mean);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
     });
-    ctx.stroke();
-  }, [points]);
-
-  const info = series.find((s) => s.id === seriesId);
+  }, [traces]);
 
   return (
     <div className="tile-body chart">
       <div className="chart-head">
-        <span className="chart-name">{info?.label ?? seriesId}</span>
+        <span className="chart-names">
+          {ids.map((id, n) => (
+            <span key={id} className="chart-name">
+              {ids.length > 1 && (
+                <span className="chart-swatch" style={{ background: COLOURS[n % COLOURS.length] }} />
+              )}
+              {series.find((s) => s.id === id)?.label ?? id}
+            </span>
+          ))}
+        </span>
         <span className={calibrated ? 'chart-unit' : 'chart-unit uncal'}>
           {calibrated ? 'dB SPL' : 'dBFS'}
         </span>
@@ -177,6 +224,7 @@ export function ChartSettings({ tile }: { tile: Tile }) {
   const setConfig = useStore((s) => s.setConfig);
   const history = useStore((s) => s.config.history);
   const opts = tile.options as Options;
+  const chosen = seriesOf(opts);
   const [series, setSeries] = useState<SeriesInfo[]>([]);
 
   useEffect(() => {
@@ -189,19 +237,27 @@ export function ChartSettings({ tile }: { tile: Tile }) {
 
   return (
     <>
-      <label>
-        Series
-        <select
-          value={opts.seriesId ?? 'spl:a:f'}
-          onChange={(e) => setTileOptions(tile.id, { seriesId: e.target.value })}
-        >
-          {series.map((s) => (
-            <option key={s.id} value={s.id}>
+      <fieldset className="chart-series">
+        <legend>Series</legend>
+        {series.map((s) => {
+          const on = chosen.includes(s.id);
+          return (
+            <label key={s.id} className="check">
+              <input
+                type="checkbox"
+                checked={on}
+                disabled={!on && chosen.length >= MAX_SERIES}
+                onChange={() => {
+                  const next = on ? chosen.filter((id) => id !== s.id) : [...chosen, s.id];
+                  // Never empty: a chart of nothing would only say "waiting".
+                  if (next.length > 0) setTileOptions(tile.id, { seriesIds: next, seriesId: next[0] });
+                }}
+              />
               {s.label}
-            </option>
-          ))}
-        </select>
-      </label>
+            </label>
+          );
+        })}
+      </fieldset>
 
       <label>
         Span

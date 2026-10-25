@@ -47,7 +47,10 @@ export interface SpectrumConfig {
 export type ChannelSelect = { kind: 'channel'; index: number } | { kind: 'mix' };
 
 /** `leqtion_dsp::leq::LeqWindow` */
-export type LeqWindow = { kind: 'sliding'; seconds: number } | { kind: 'elapsed' };
+export type LeqWindow =
+  | { kind: 'sliding'; seconds: number }
+  | { kind: 'elapsed' }
+  | { kind: 'periodic'; seconds: number };
 
 /** `leqtion_dsp::leq::LeqSpec` */
 export interface LeqSpec {
@@ -57,13 +60,46 @@ export interface LeqSpec {
   window: LeqWindow;
 }
 
+/** `leqtion_dsp::stereo::StereoPair` — inputs counted from zero. */
+export interface StereoPair {
+  left: number;
+  right: number;
+}
+
+/**
+ * `leqtion_dsp::engine::Routing` — which input each meter reads.
+ *
+ * The levels (SPL, LEQ, bargraph, history, log, calibration) read
+ * `EngineConfig.channel`. `null` on `spectrum` and `transfer` means "the same
+ * as the levels"; `null` on `compare` means no comparison trace. A calibration
+ * belongs to the levels input, so only meters on that same input are dB SPL —
+ * each says so with its own flag in the frame.
+ */
+export interface Routing {
+  spectrum: ChannelSelect | null;
+  compare: ChannelSelect | null;
+  transfer: ChannelSelect | null;
+  stereo: StereoPair;
+  loudness: number[];
+}
+
+export const DEFAULT_ROUTING: Routing = {
+  spectrum: null,
+  compare: null,
+  transfer: null,
+  stereo: { left: 0, right: 1 },
+  loudness: [0, 1],
+};
+
 /** `leqtion_dsp::engine::EngineConfig` */
 export interface EngineConfig {
   spectrum: SpectrumConfig;
   timeWeighting: TimeWeighting;
+  /** The levels input. */
   channel: ChannelSelect;
   leqs: LeqSpec[];
   history: HistoryConfig;
+  routing: Routing;
 }
 
 /** `leqtion_dsp::bands::Band` */
@@ -158,13 +194,103 @@ export interface PeakBand {
   hz: number;
 }
 
+/** `leqtion_dsp::stereo::StereoSignal` */
+export type StereoSignal = 'none' | 'leftOnly' | 'rightOnly' | 'both';
+
+/** `leqtion_dsp::stereo::StereoReading` */
+export interface StereoReading {
+  /** The inputs actually read, after falling back on a short device. */
+  left: number;
+  right: number;
+  signal: StereoSignal;
+  /** −1 to +1, only while both sides carry signal. */
+  correlation: number | null;
+  /** Lowest since the last reset. */
+  correlationMin: number | null;
+  /** Left relative to right, dB; positive is left louder. */
+  balanceDb: number | null;
+  /** Peak envelope, linear, full scale = 1. For scaling the display only. */
+  peak: number;
+}
+
+/** `leqtion_dsp::stereo::ScopePoints` */
+export interface ScopePoints {
+  /** Interleaved x, y. Mono is vertical; |x| + |y| = 1 is full scale. */
+  points: number[];
+  next: number;
+  skipped: number;
+}
+
+/**
+ * `leqtion_dsp::loudness::LoudnessReading` — ITU-R BS.1770 / EBU R128.
+ * LUFS and LU are relative to full scale; no calibration ever applies.
+ */
+export interface LoudnessReading {
+  momentary: number | null;
+  shortTerm: number | null;
+  integrated: number | null;
+  /** Loudness range, LU (EBU Tech 3342). */
+  range: number | null;
+  maxMomentary: number | null;
+  maxShortTerm: number | null;
+  /** dBTP, highest since reset. */
+  truePeak: number | null;
+  elapsedSeconds: number;
+}
+
+/** `leqtion_dsp::engine::CompareTrace` */
+export interface CompareTrace {
+  bandsDb: number[];
+  calibrated: boolean;
+}
+
+/** `leqtion_dsp::engine::Inputs` — what each meter is actually reading. */
+export interface Inputs {
+  /** Zero until the first audio arrives. */
+  channels: number;
+  levels: ChannelSelect;
+  spectrum: ChannelSelect;
+  compare?: ChannelSelect;
+  transfer: ChannelSelect;
+  stereo: StereoPair;
+  loudness: number[];
+}
+
+/** `leqtion_dsp::leq::LeqPeriod` */
+export interface LeqPeriod {
+  startSeconds: number;
+  seconds: number;
+  value: number;
+  /** The LEQ of everything since the reset, as of the end of this period. */
+  total: number;
+  /** Ran boundary to boundary. A short first period is not comparable with a limit. */
+  complete: boolean;
+  current: boolean;
+  /** Time of day it began, when known. */
+  clock?: string;
+}
+
+/** `leqtion_dsp::leq::LeqPeriods` */
+export interface LeqPeriods {
+  id: string;
+  label: string;
+  weighting: Weighting;
+  periodSeconds: number;
+  calibrated: boolean;
+  periods: LeqPeriod[];
+}
+
 /** `leqtion_dsp::engine::Frame` */
 export interface Frame {
   sampleRate: number;
   planRevision: number;
+  /** The levels. Other meters carry their own flag. */
   calibrated: boolean;
+  /** `bandsDb` and `peaksDb` are dB SPL. */
+  spectrumCalibrated: boolean;
   bandsDb: number[];
   peaksDb: number[];
+  compare?: CompareTrace;
   spl: SplReading[];
   leqs: LeqReading[];
   timeWeighting: TimeWeighting;
@@ -180,6 +306,9 @@ export interface Frame {
   inputSilentSeconds: number;
   elapsedSeconds: number;
   calibration?: CalibrationStatus;
+  stereo: StereoReading;
+  loudness: LoudnessReading;
+  inputs: Inputs;
   /** Present only while a reference source is selected. */
   transfer?: TransferReading;
 }
@@ -473,4 +602,5 @@ export const DEFAULT_ENGINE_CONFIG: EngineConfig = {
   channel: { kind: 'channel', index: 0 },
   leqs: [],
   history: { intervalSeconds: 1, spanSeconds: 3600 },
+  routing: DEFAULT_ROUTING,
 };

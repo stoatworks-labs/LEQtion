@@ -7,9 +7,12 @@ import { ChartSettings, ChartTile } from './ChartTile';
 import { GeneratorSettings, GeneratorTile } from './GeneratorTile';
 import { TransferSettings, TransferTile } from './TransferTile';
 import { LeqSettings, LeqTile } from './LeqTile';
+import { LoudnessSettings, LoudnessTile } from './LoudnessTile';
+import { PeriodsSettings, PeriodsTile } from './PeriodsTile';
 import { RtaSettings, RtaTile } from './RtaTile';
 import { SpectrographSettings, SpectrographTile } from './SpectrographTile';
 import { SplSettings, SplTile } from './SplTile';
+import { VectorscopeSettings, VectorscopeTile } from './VectorscopeTile';
 
 /**
  * The one place a tile kind is defined.
@@ -82,6 +85,27 @@ export const TILE_TYPES: TileType[] = [
     blurb: 'One equivalent level, on the window and weighting you define.',
     Body: LeqTile,
     Settings: LeqSettings,
+  },
+  {
+    kind: 'periods',
+    title: 'LEQ periods',
+    blurb: 'One bar per period on the clock — LAeq,15min — with a limit line.',
+    Body: PeriodsTile,
+    Settings: PeriodsSettings,
+  },
+  {
+    kind: 'vectorscope',
+    title: 'Vectorscope',
+    blurb: 'A stereo pair as a goniometer, with phase correlation and balance.',
+    Body: VectorscopeTile,
+    Settings: VectorscopeSettings,
+  },
+  {
+    kind: 'loudness',
+    title: 'Loudness',
+    blurb: 'LUFS momentary, short-term and integrated, LRA and true peak (EBU R 128).',
+    Body: LoudnessTile,
+    Settings: LoudnessSettings,
   },
 ];
 

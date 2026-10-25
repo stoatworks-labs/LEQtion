@@ -21,6 +21,8 @@ use leqtion_dsp::calibration::{Calibration, CalibrationStatus, CalibrationTarget
 use leqtion_dsp::engine::{EngineConfig, Frame};
 use leqtion_dsp::generator::GeneratorConfig;
 use leqtion_dsp::history::{HistoryPoint, SeriesInfo};
+use leqtion_dsp::leq::LeqPeriods;
+use leqtion_dsp::stereo::ScopePoints;
 use leqtion_dsp::transfer::{DelayEstimate, TransferConfig, TransferPlan};
 use serde::Serialize;
 use logger::{default_filename, LogStatus, Logger};
@@ -160,6 +162,7 @@ fn start(
     app: AppHandle,
     state: State<'_, AppState>,
     options: CaptureOptions,
+    clock: Option<f64>,
 ) -> Result<SessionStatus, String> {
     let (generator, generator_channel, reference) = {
         let settings = state
@@ -175,7 +178,7 @@ fn start(
             .lock()
             .map_err(|_| "the session lock is poisoned; restart LEQtion")?;
         session.set_generator(generator, generator_channel);
-        session.start(app, options.clone(), generator_channel)?
+        session.start(app, options.clone(), generator_channel, clock)?
     };
     state.with_analysis(|a| a.reference = reference)?;
 
@@ -359,9 +362,38 @@ fn logging_status(state: State<'_, AppState>) -> Result<LogStatus, String> {
     })
 }
 
+/// `clock` is the time of day now, seconds since midnight, from the window.
+/// The engine has no clock (crate rule), and the `time` crate cannot read the
+/// local offset once a process has threads, which this one always has — so the
+/// window, which knows its own time zone, says.
 #[tauri::command]
-fn reset_measurement(state: State<'_, AppState>) -> Result<(), String> {
-    state.with_analysis(|a| a.engine.reset_measurement())
+fn reset_measurement(state: State<'_, AppState>, clock: Option<f64>) -> Result<(), String> {
+    // One lock for both, so no block can reach the LEQs between the reset and
+    // the time of day that places their periods.
+    state.with_analysis(|a| {
+        a.engine.reset_measurement();
+        a.engine.set_clock_origin(clock);
+    })
+}
+
+/// Vectorscope points written since `since`. See `leqtion_dsp::stereo`.
+#[tauri::command]
+fn vectorscope_points(
+    state: State<'_, AppState>,
+    since: u64,
+    max_points: usize,
+) -> Result<ScopePoints, String> {
+    state.with_analysis(|a| a.engine.vectorscope_points(since, max_points))
+}
+
+/// Every period of one periodic LEQ, for the bar chart.
+#[tauri::command]
+fn leq_periods(
+    state: State<'_, AppState>,
+    id: String,
+    max_points: usize,
+) -> Result<Option<LeqPeriods>, String> {
+    state.with_analysis(|a| a.engine.leq_periods(&id, max_points))
 }
 
 #[tauri::command]
@@ -965,6 +997,8 @@ pub fn run() {
             band_plan,
             set_config,
             reset_measurement,
+            vectorscope_points,
+            leq_periods,
             reset_peak_hold,
             begin_calibration,
             calibration_status,

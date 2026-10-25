@@ -17,12 +17,21 @@
 //! `--offset` applies a calibration by hand, for when you know the figure
 //! already: the number is the SPL that full scale corresponds to, which is what
 //! LEQtion shows next to a calibration.
+//!
+//! The routing flags put each meter on its own input, as the Inputs panel
+//! does, counted from 1 as the app counts them:
+//!
+//! ```sh
+//! cargo run --example meter -- --device "Pro Tools Audio Bridge 16" \
+//!     --levels 1 --compare 3 --stereo 3,4 --loudness 3,4
+//! ```
 
 use std::time::{Duration, Instant};
 
 use leqtion_dsp::bands::Fraction;
 use leqtion_dsp::calibration::{Calibration, CalibrationTarget};
-use leqtion_dsp::engine::{Engine, EngineConfig};
+use leqtion_dsp::engine::{ChannelSelect, Engine, EngineConfig};
+use leqtion_dsp::stereo::StereoPair;
 use leqtion_dsp::leq::{LeqSpec, LeqWindow};
 use leqtion_dsp::weighting::Weighting;
 
@@ -57,6 +66,39 @@ fn main() {
 
     let mut config = EngineConfig::default();
     config.spectrum.fraction = Fraction::Third;
+    // Inputs on the command line count from 1, as they do in the app.
+    let input = |name: &str| -> Option<ChannelSelect> {
+        let v = flag(&args, name)?;
+        if v == "mix" {
+            return Some(ChannelSelect::Mix);
+        }
+        let n: usize = v.parse().ok()?;
+        Some(ChannelSelect::Channel {
+            index: n.saturating_sub(1),
+        })
+    };
+    let inputs = |name: &str| -> Option<Vec<usize>> {
+        let v = flag(&args, name)?;
+        let list: Vec<usize> = v
+            .split(',')
+            .filter_map(|n| n.trim().parse::<usize>().ok())
+            .map(|n| n.saturating_sub(1))
+            .collect();
+        (!list.is_empty()).then_some(list)
+    };
+    if let Some(levels) = input("--levels") {
+        config.channel = levels;
+    }
+    config.routing.spectrum = input("--rta");
+    config.routing.compare = input("--compare");
+    if let Some(pair) = inputs("--stereo") {
+        if let [left, right] = pair[..] {
+            config.routing.stereo = StereoPair { left, right };
+        }
+    }
+    if let Some(list) = inputs("--loudness") {
+        config.routing.loudness = list;
+    }
     config.leqs = vec![
         LeqSpec {
             id: "short".into(),
@@ -91,8 +133,8 @@ fn main() {
         "{} on {} — {} ch, {} Hz",
         info.device, info.host, channels, info.sample_rate
     );
-    println!("levels in {unit}\n");
-    println!("   time   LAF     LCF     LZF    LAeq,1s   LAeq    peak   bands");
+    println!("levels in {unit}, loudness in LUFS\n");
+    println!("   time   LAF     LCF     LZF    LAeq,1s   LAeq    peak   bands   corr    M      S      I    TP");
 
     let start = Instant::now();
     let mut last_print = Instant::now();
@@ -138,8 +180,13 @@ fn main() {
             // How many bands are above the floor — a quick way to see that the
             // spectrum is populated rather than a single spike or nothing.
             let live = f.bands_db.iter().filter(|&&v| v > -90.0).count();
+            let lufs = |v: Option<f64>| v.map_or("   --".to_string(), |v| format!("{v:6.1}"));
+            let corr = f
+                .stereo
+                .correlation
+                .map_or("  -- ".to_string(), |r| format!("{r:+5.2}"));
             println!(
-                "  {:5.1}s {:7.1} {:7.1} {:7.1} {:8.1} {:7.1} {:7.1}  {live:>4}/{}",
+                "  {:5.1}s {:7.1} {:7.1} {:7.1} {:8.1} {:7.1} {:7.1}  {live:>4}/{}  {corr} {} {} {} {}",
                 start.elapsed().as_secs_f64(),
                 level(Weighting::A),
                 level(Weighting::C),
@@ -152,6 +199,10 @@ fn main() {
                     .map(|s| s.peak)
                     .unwrap_or(f64::NAN),
                 f.bands_db.len(),
+                lufs(f.loudness.momentary),
+                lufs(f.loudness.short_term),
+                lufs(f.loudness.integrated),
+                lufs(f.loudness.true_peak),
             );
         }
     }
@@ -168,6 +219,49 @@ fn main() {
     for l in &f.leqs {
         println!("  {:<12} {:7.1} {unit}", l.label, l.value);
     }
+
+    let name = |c: ChannelSelect| match c {
+        ChannelSelect::Channel { index } => format!("input {}", index + 1),
+        ChannelSelect::Mix => "mix".to_string(),
+    };
+    let i = &f.inputs;
+    println!();
+    println!("levels on {}, RTA on {}", name(i.levels), name(i.spectrum));
+    if let (Some(c), Some(trace)) = (i.compare, &f.compare) {
+        // The comparison trace's own loudest band, so a routing mistake shows
+        // as the wrong frequency rather than needing the window to spot.
+        let (band, level) = trace
+            .bands_db
+            .iter()
+            .enumerate()
+            .fold((0, f32::MIN), |m, (n, &v)| if v > m.1 { (n, v) } else { m });
+        println!(
+            "comparison on {}: loudest band {} at {level:.1} {}",
+            name(c),
+            engine.plan().bands[band].label,
+            if trace.calibrated { "dB SPL" } else { "dBFS" }
+        );
+    }
+    let st = &f.stereo;
+    println!(
+        "vectorscope on inputs {} and {}: correlation {} (min {}), balance {}",
+        st.left + 1,
+        st.right + 1,
+        st.correlation.map_or("--".into(), |r| format!("{r:+.3}")),
+        st.correlation_min.map_or("--".into(), |r| format!("{r:+.3}")),
+        st.balance_db.map_or("--".into(), |b| format!("{b:+.2} dB")),
+    );
+    let lo = &f.loudness;
+    let opt = |v: Option<f64>| v.map_or("--".to_string(), |v| format!("{v:.1}"));
+    println!(
+        "loudness on inputs {:?}: I {} LUFS, LRA {} LU, max M {}, max S {}, TP {} dBTP",
+        i.loudness.iter().map(|c| c + 1).collect::<Vec<_>>(),
+        opt(lo.integrated),
+        opt(lo.range),
+        opt(lo.max_momentary),
+        opt(lo.max_short_term),
+        opt(lo.true_peak),
+    );
     if dropped > 0 {
         println!();
         println!("Frames were dropped, so the LEQ above is short by an unknown amount.");
@@ -183,6 +277,11 @@ meter — LEQtion's measurement chain, without the window
   --rate N           sample rate
   --seconds N        how long to measure (default 10)
   --offset N         SPL that full scale corresponds to, to read in dB SPL
+  --levels N|mix     input the levels read (default 1)
+  --rta N|mix        input the RTA reads (default: the levels input)
+  --compare N|mix    input for the RTA's comparison trace
+  --stereo L,R       vectorscope pair (default 1,2)
+  --loudness A,B,..  loudness inputs (default 1,2)
 ";
 
 fn flag(args: &[String], name: &str) -> Option<String> {

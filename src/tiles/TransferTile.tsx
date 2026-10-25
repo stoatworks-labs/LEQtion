@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
 
+import { inputName } from '../lib/format';
 import { api, errorText } from '../lib/ipc';
 import { dbTicks, dbToUnit, fitCanvas, freqTicks, freqToUnit } from '../lib/plot';
-import { useAnimationFrame, useFrameRef } from '../lib/useFrame';
+import { useAnimationFrame, useFrameRef, useFrameValue } from '../lib/useFrame';
 import { useStore } from '../state/store';
 import type { Tile } from '../state/store';
-import type { DelayEstimate } from '../types';
+import type { DelayEstimate, ReferenceSource } from '../types';
+import { InputSelect } from '../ui/InputSelect';
 
 /**
  * Magnitude, phase and coherence on one set of axes.
@@ -177,6 +179,7 @@ export function TransferTile({ tile }: { tile: Tile }) {
   return (
     <div className="tile-body">
       <canvas ref={canvas} className="fill" />
+      <TransferInputs reference={reference} />
       {reference.kind === 'off' && (
         <p className="tile-empty overlay">
           No reference selected. Choose one in this tile&rsquo;s settings — the generator&rsquo;s
@@ -204,6 +207,8 @@ export function TransferSettings({ tile }: { tile: Tile }) {
   const [error, setError] = useState<string | null>(null);
 
   const inputChannels = status.stream?.channels ?? 2;
+  const measurement = useStore((s) => s.config.routing.transfer);
+  const setConfig = useStore((s) => s.setConfig);
 
   async function find() {
     setBusy(true);
@@ -244,6 +249,17 @@ export function TransferSettings({ tile }: { tile: Tile }) {
             </option>
           ))}
         </select>
+      </label>
+
+      <label title="The input being measured. The reference is the other half of the pair.">
+        Measurement
+        <InputSelect
+          value={measurement}
+          follow="Same as the levels"
+          onChange={(transfer) =>
+            void setConfig((c) => ({ ...c, routing: { ...c.routing, transfer } }))
+          }
+        />
       </label>
 
       <label>
@@ -377,5 +393,22 @@ export function TransferSettings({ tile }: { tile: Tile }) {
         </p>
       )}
     </>
+  );
+}
+
+/**
+ * Which two inputs the trace is between. A transfer function is a ratio of
+ * two signals, so a trace without both named is ambiguous in the one way that
+ * matters: which way up it is.
+ */
+function TransferInputs({ reference }: { reference: ReferenceSource }) {
+  const measured = useFrameValue(500)?.inputs.transfer;
+  if (!measured || reference.kind === 'off') return null;
+  const ref =
+    reference.kind === 'internal' ? 'generator' : inputName({ kind: 'channel', index: reference.channel });
+  return (
+    <span className="tile-corner">
+      {inputName(measured)} against {ref}
+    </span>
   );
 }

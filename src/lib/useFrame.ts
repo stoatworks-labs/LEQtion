@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { currentFrame, onFrame } from './ipc';
+import { useStore } from '../state/store';
 import type { Frame } from '../types';
 
 /**
@@ -41,6 +42,20 @@ export function useFrameValue(intervalMs = 100): Frame | null {
   );
 
   return frame;
+}
+
+/**
+ * Whether the RTA and spectrograph are in dB SPL.
+ *
+ * Their own flag rather than "is there a calibration": with routing, the RTA
+ * can be reading an input the calibration does not belong to (AGENTS.md §4.4).
+ * Before the first frame it falls back to what the configuration implies, so
+ * the axis does not jump on the first paint.
+ */
+export function useSpectrumCalibrated(): boolean {
+  const frame = useFrameValue(500);
+  const fallback = useStore((s) => s.calibration != null && s.config.routing.spectrum == null);
+  return frame ? frame.spectrumCalibrated : fallback;
 }
 
 /**

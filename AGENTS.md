@@ -26,7 +26,8 @@ src/                       React frontend. Presentation only.
   lib/useFrame.ts            Frame hooks: ref for canvases, throttled state for readouts.
   state/store.ts             zustand: config, devices, layout, calibration.
   tiles/                     One file per tile kind + registry.tsx
-  ui/                        App shell, grid, toolbar, device bar, calibration dialog.
+  ui/                        App shell, grid, toolbar, device bar, calibration dialog,
+                               InputsPanel (the routing table) and InputSelect.
 
 src-tauri/
   src/lib.rs                 Tauri commands. Thin — no analysis, ever.
@@ -34,10 +35,13 @@ src-tauri/
   src/settings.rs            One JSON file, written atomically.
   src/logger.rs              CSV log.
   src/project.rs             Projects and shows. See docs/tuning.md §1.
-  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 146 tests.
+  crates/leqtion-dsp/        THE IMPORTANT CRATE. Pure DSP, no I/O, 217 tests.
                                generator.rs  signal sources
                                transfer.rs   multi-time-window TF, coherence, delay
                                history.rs    levels over time, per-interval buckets
+                               stereo.rs     vectorscope points, correlation, balance
+                               loudness.rs   BS.1770 / R 128: LUFS, LRA, true peak
+                               leq.rs        sliding, elapsed and periodic LEQs
   crates/leqtion-audio/      cpal capture, host/device enumeration, lock-free ring.
   crates/diag/               Vendored fleet logging/crash crate. Don't edit here.
   examples/meter.rs          Whole chain, no window. The end-to-end check.
@@ -58,13 +62,13 @@ data plotted against them can only be guaranteed to agree if there is one implem
 npm install
 npm run app            # tauri dev
 npm run app:build      # bundle
-npm test               # vitest, 42 tests
+npm test               # vitest, 49 tests
 npm run typecheck      # tsc -b across app/node/test projects
 npm run lint           # oxlint
 ```
 
 ```bash
-cd src-tauri && cargo test --workspace     # 188 tests
+cd src-tauri && cargo test --workspace     # 259 tests
 ```
 
 ```bash
@@ -255,6 +259,50 @@ existed. `settings.json` holds a *pointer* to the last open project, and a proje
 been moved or deleted since resolves to nothing rather than to an error. Someone opening a
 meter to check a level must never have to name a project first.
 
+### 4.13 Each meter reads its own input; a calibration belongs to one
+
+`EngineConfig::routing` points the RTA, its comparison trace, the transfer function's
+measured side, the vectorscope and the loudness at inputs of their own. The levels (SPL,
+LEQ, bargraph, history, log, calibration) stay on `EngineConfig::channel`. `None` on a
+single-input route means "the same as the levels", which is what every settings file written
+before routing existed means, so they load unchanged
+(`a_config_from_before_routing_loads_unchanged`).
+
+**A calibration applies only to meters reading the levels input.** "The same input" is
+decided by `ChannelSelect::resolve` against the device's channel count (the mix of a one-input
+device *is* that input). Every meter that can carry a calibration carries its own flag —
+`Frame::calibrated` for the levels, `spectrum_calibrated`, `CompareTrace::calibrated`,
+`LeqPeriods::calibrated` — and the UI reads that flag, never "is a calibration loaded". An
+RTA of the desk feed in dB SPL because the microphone on another input was calibrated is the
+§4.4 failure by another route, and nothing downstream could detect it.
+
+Two consequences that are easy to undo by accident:
+
+- The calibration run checks its tone on the **levels** input. When the RTA reads something
+  else, `Engine::cal_spectrum` exists for the length of the run so the frequency check is not
+  taken from the wrong input (`a_calibration_checks_the_levels_input_whatever_the_rta_shows`).
+- Loudness inputs resolve, then deduplicate. Asking a two-input device for 3 and 4 measures
+  input 2 once, not twice — twice would read 3 dB high.
+
+### 4.14 Loudness never sees a calibration, and is not dBFS
+
+LUFS is defined against full scale (BS.1770). No offset reaches `loudness.rs`, and a
+full-scale sine reads −3.01 LUFS there against 0 dBFS on the levels; both are correct.
+Integrated loudness and LRA are kept as 0.01 LU histograms of block *energies* so a
+measurement of any length has bounded memory and the gates still average energy (§4.1); the
+worst-case error is in the module docs. The windows step every 10 ms, not 100 ms, or Tech 3341
+cases 13/14 read up to 0.58 LU low — see the module docs before "simplifying" that.
+
+### 4.15 Periodic LEQs are on the clock, and a short period says so
+
+`LeqWindow::Periodic` splits the measurement into consecutive periods placed on the wall clock.
+The engine has no clock, so the window passes the time of day with **Start** and **Reset
+measurement** (`secondsOfDay` in `ipc.ts`; the `time` crate cannot read the local offset in a
+threaded process), and the session hands it over *before* the analysis thread starts — an
+accumulator that has measured anything only takes a new origin at its next reset. The
+period under way at the start is `complete: false` and is drawn hatched: a six-minute LAeq
+must never pass for a quarter-hour one.
+
 ## 5. Traps
 
 **Spectrum normalisation is `2/(N·S2)`.** The `1/N` is easy to omit and costs 10·log10(N) —
@@ -342,7 +390,7 @@ hardened, which is why the problem never shows in development.
 
 Verified:
 
-- The DSP, extensively, against synthetic signals with known answers (117 tests).
+- The DSP, extensively, against synthetic signals with known answers (217 tests).
 - The audio path against real Core Audio hardware — enumeration across Dante, NDI, L-ISA and
   Pro Tools bridge devices, and capture from the built-in microphone with zero drops.
 - The whole chain end to end via `examples/meter.rs`: A < C < Z on room noise, sliding LEQ
@@ -354,6 +402,19 @@ Verified:
   display, and LAF and LAeq agree with each other to 0.1 dB. That exercises the whole
   chain — capture source, ring, analysis thread, engine, frame events, every tile — with
   no hardware at all.
+- **Routing, the vectorscope, loudness and periodic LEQs, on real Core Audio** (2026-10-25).
+  A 16-channel file was played into Pro Tools Audio Bridge 16 with sox and read back from
+  it: 1 kHz at −20 dBFS on input 1, nothing on 2, 997 Hz at −23 dBFS on 3 and the same 60°
+  later on 4. `examples/meter.rs --levels 1 --compare 3 --stereo 3,4 --loudness 3,4` read
+  levels −20.0 dBFS, correlation +0.500 (cos 60°), −23.0 LUFS momentary, short-term and
+  integrated, −23.0 dBTP, and the comparison trace's tallest band 1k at −23.0 dBFS, with no
+  frames dropped. The GUI (a debug bundle on a scratch `HOME`, with pink noise on input 1)
+  showed the same numbers, the RTA in dB SPL with the comparison line on its own dBFS axis,
+  the vectorscope's ellipse, one-minute period bars with the first one hatched, and the
+  transfer function measuring input 4 against a loopback reference on 3.
+- The **loudness meter against the EBU's own test cases**, synthesised in the tests: Tech
+  3341 cases 1–6 and 9–23 (true peak included), Tech 3342 cases 1–4. Cases 7–8 and 3342's 5–6
+  need the EBU's recorded programme files and are not covered.
 
 **Not** verified:
 
@@ -367,8 +428,13 @@ Verified:
 - ASIO. It compiles behind a feature flag and has never carried audio — the only Windows
   machine here is ARM64, where ASIO drivers barely exist. See `docs/asio.md`.
 - Anything downstream of a converter. No signal has been round-tripped through an
-  interface, a loopback cable or a loudspeaker, so the transfer function and the delay
-  finder have only ever seen the internal tap.
+  interface, a loopback cable or a loudspeaker. The transfer function has seen the
+  internal tap and, since routing, a loopback reference on a *virtual* device — which has
+  no converter, no clock of its own and no latency worth finding, so it says nothing about
+  the delay finder.
+- Loudness on programme material, or against another R 128 meter. Only the EBU's synthetic
+  cases have been run. Surround inputs are weighted 1.0, not BS.1770's 1.41.
+- The vectorscope and the canvases on a Windows or Linux webview.
 
 Note on driving the GUI: coordinate clicking (`click at`) fails on this machine with
 AppleScript error −25204, which is what "assistive access is denied" looks like and is why
