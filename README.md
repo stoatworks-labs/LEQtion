@@ -18,6 +18,8 @@ correlation, an EBU R 128 loudness meter, a signal generator and transfer functi
 measurement with phase and coherence, all on a grid of tiles you lay out yourself, each
 meter reading whichever input you point it at.
 
+The [project page](https://stoatworks-labs.com/software/leqtion/) has the downloads, the [user guide](https://stoatworks-labs.com/software/leqtion/guide/) and the video.
+
 [![Watch LEQtion running — 45 seconds](docs/video-thumb.png)](https://www.youtube.com/watch?v=Qe8D6juRCU4)
 
 *A 45-second tour. It's the actual app throughout, recorded on screen and driven over macOS
